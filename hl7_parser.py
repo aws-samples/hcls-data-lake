@@ -74,6 +74,7 @@ def add_child_element(parent_data, child_element):
 
 def lambda_handler(event, context):
     logger.info("Start")
+    
     # retrieve bucket name and file_key from the S3 event
     bucket_name = event['Records'][0]['s3']['bucket']['name']
     file_key = event['Records'][0]['s3']['object']['key']
@@ -105,7 +106,8 @@ def lambda_handler(event, context):
             logger.info("Record built, writing to file")
             key = "staging/{}_{}.json".format(time.time(), m_id)
             
-            # Do not use indents or linebreaks within a message/record, takes more file space and does not work with JSON-SerDe (used by Athena)
+            # Do not use indents or linebreaks within a message/record; 
+            # takes more file space and does not work with JSON-SerDe (used by Athena)
             content = json.dumps(rec)   
         
         except Exception as e:
