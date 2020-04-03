@@ -9,8 +9,12 @@ import urllib.request
 import zipfile
 import tarfile
 import logging
+import sys
 
 def main():
+    # Set working directory to file location
+    os.chdir(os.path.dirname(sys.argv[0]))
+    
     # Load config file
     with open("config.yml", 'r') as ymlfile: cfg = yaml.full_load(ymlfile)
     
