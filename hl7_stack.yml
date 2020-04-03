@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Creates an HL7 parsing stack'
+
+Parameters:
+    TempBucket: 
+        Description: Where we are temporarily storing artifacts while deploying
+        Type: String
+    TempLibKey: 
+        Description: Library key in temporary bucket
+        Type: String
+    TempFuncKey: 
+        Description: Function key in temporary bucket
+        Type: String
+    IngestBucket:
+        Description: Bucket we want to ingest HL7v2 messages into
+        Type: String
+Resources:
+
+    LambdaLayer:
+        Type: AWS::Lambda::LayerVersion
+        Properties: 
+            CompatibleRuntimes: ["python2.7", "python3.6", "python3.7", "python3.8"]
+            Content: 
+                S3Bucket: !Ref TempBucket
+                S3Key: !Ref TempLibKey
+            LayerName: "hl7apy"
+            Description: "HL7apy parser library"
+            LicenseInfo: "MIT"
+    
+    LambdaRole:
+        Type: AWS::IAM::Role
+        Properties: 
+            AssumeRolePolicyDocument: 
+                Version: 2012-10-17
+                Statement:
+                  - Effect: Allow
+                    Principal:
+                        Service:
+                          - 'lambda.amazonaws.com'
+                    Action:
+                      - 'sts:AssumeRole'
+            Path: /
+            Policies:
+              - PolicyName: adminaccess
+                PolicyDocument:
+                    Version: 2012-10-17
+                    Statement:
+                      - Effect: Allow
+                        Action: '*'
+                        Resource: '*'
+
+    LambdaFunction:
+        Type: AWS::Lambda::Function
+        Properties: 
+            FunctionName: "hl7Parser"
+            Code:
+                S3Bucket: !Ref TempBucket
+                S3Key: !Ref TempFuncKey
+            Description: "HL7 parser from ER7 to JSON"
+            Handler: "hl7_parser.lambda_handler"
+            Layers: 
+                - !Ref LambdaLayer
+            Role: !GetAtt LambdaRole.Arn
+            Runtime: python3.8
+            Timeout: 30
+
+    # Permision for S3 to invoke Lambda
+    BucketLambdaPermission:
+        Type: AWS::Lambda::Permission
+        Properties:
+            Action: 'lambda:InvokeFunction'
+            FunctionName: !Ref LambdaFunction
+            Principal: s3.amazonaws.com
+            SourceAccount: !Ref "AWS::AccountId"
+            SourceArn: !Sub "arn:aws:s3:::${IngestBucket}"
+    
+    # S3 data lake bucket
+    DataLakeBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+            BucketName: !Ref IngestBucket
+            NotificationConfiguration:
+                LambdaConfigurations:
+                  - Event: 's3:ObjectCreated:*'
+                    Function: !GetAtt LambdaFunction.Arn
+                    Filter:
+                        S3Key:
+                            Rules:
+                              - Name: prefix
+                                Value: raw/
