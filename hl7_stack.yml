@@ -14,8 +14,8 @@ Parameters:
     IngestBucket:
         Description: Bucket we want to ingest HL7v2 messages into
         Type: String
-Resources:
 
+Resources:
     LambdaLayer:
         Type: AWS::Lambda::LayerVersion
         Properties: 
@@ -27,6 +27,7 @@ Resources:
             Description: "HL7apy parser library"
             LicenseInfo: "MIT"
     
+    # Role assumed by our Lambda function, provides permission to access the data lake bucket
     LambdaRole:
         Type: AWS::IAM::Role
         Properties: 
@@ -41,13 +42,13 @@ Resources:
                       - 'sts:AssumeRole'
             Path: /
             Policies:
-              - PolicyName: adminaccess
+              - PolicyName: data-lake-bucket-access
                 PolicyDocument:
                     Version: 2012-10-17
                     Statement:
                       - Effect: Allow
-                        Action: '*'
-                        Resource: '*'
+                        Action: ['s3:GetObject', 's3:PutObject']
+                        Resource: !Sub "arn:aws:s3:::${IngestBucket}/*" 
 
     LambdaFunction:
         Type: AWS::Lambda::Function
@@ -63,6 +64,7 @@ Resources:
             Role: !GetAtt LambdaRole.Arn
             Runtime: python3.8
             Timeout: 30
+            MemorySize: 256
 
     # Permision for S3 to invoke Lambda
     BucketLambdaPermission:
@@ -71,7 +73,7 @@ Resources:
             Action: 'lambda:InvokeFunction'
             FunctionName: !Ref LambdaFunction
             Principal: s3.amazonaws.com
-            SourceAccount: !Ref "AWS::AccountId"
+            SourceAccount: !Ref "AWS::AccountId" # Include our source account for added security
             SourceArn: !Sub "arn:aws:s3:::${IngestBucket}"
     
     # S3 data lake bucket
@@ -79,6 +81,21 @@ Resources:
         Type: AWS::S3::Bucket
         Properties:
             BucketName: !Ref IngestBucket
+            
+            # Encryption at rest
+            BucketEncryption: 
+                ServerSideEncryptionConfiguration:
+                  - ServerSideEncryptionByDefault:
+                        SSEAlgorithm: AES256
+            
+            # Block all public access
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: true
+                IgnorePublicAcls: true
+                BlockPublicPolicy: true
+                RestrictPublicBuckets: true   
+                
+            # Lambda trigger
             NotificationConfiguration:
                 LambdaConfigurations:
                   - Event: 's3:ObjectCreated:*'
