@@ -1,4 +1,4 @@
-Sample code for the healthcare data lake blog post ()
+Sample code for the healthcare data lake blog post (https://aws.amazon.com/blogs/publicsector/getting-started-healthcare-data-lake/)
 
 ## License
 
