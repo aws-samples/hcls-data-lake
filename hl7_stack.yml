@@ -41,6 +41,8 @@ Resources:
                     Action:
                       - 'sts:AssumeRole'
             Path: /
+            ManagedPolicyArns: 
+            - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
             Policies:
               - PolicyName: data-lake-bucket-access
                 PolicyDocument:
