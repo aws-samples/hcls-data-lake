@@ -1,0 +1,132 @@
+#  aws cloudformation create-stack --stack-name testCog --template-body file:///home/ec2-user/environment/cognito_user_pool.yml --capabilities CAPABILITY_AUTO_EXPAND
+# https://github.com/mbradburn/cognito-sample/blob/master/template.yaml
+# https://tenmilesquare.com/aws-sam-api-with-cognito/
+# https://www.stackery.io/blog/authentication-aws-cognito/
+# https://medium.com/build-succeeded/announcing-sam-helper-a-simple-way-to-describe-your-aws-web-socket-api-gateway-dbc278fcfada
+
+AWSTemplateFormatVersion: 2010-09-09
+
+Resources:
+  # Cognito resources
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UserPoolName: !Sub ${AWS::StackName}-UserPool
+      UsernameAttributes: [email]
+      
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub ${AWS::StackName}-UserPoolClient
+      GenerateSecret: false
+      UserPoolId: !Ref UserPool
+      ExplicitAuthFlows:
+      - ALLOW_USER_PASSWORD_AUTH
+      - ALLOW_ADMIN_USER_PASSWORD_AUTH
+      - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+  
+  # API Gateway 
+  IntegrationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ['lambda.amazonaws.com']
+          Action: ['sts:AssumeRole']
+      ManagedPolicyArns: 
+      # Provides access to CloudWatch for logging
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  
+  IntegrationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-APIGatewayHandler
+      Runtime: nodejs12.x  
+      Role: !GetAtt IntegrationLambdaRole.Arn
+      Handler: index.handler
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            console.info("EVENT\n" + JSON.stringify(event, null, 2))
+            // TODO implement
+            const response = {
+                statusCode: 200,
+                body: JSON.stringify(event),
+            };
+            return response;
+          };
+          
+  HttpAPI:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${AWS::StackName}-APIGateway
+      ProtocolType: HTTP
+  
+  MyIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    DependsOn: [IntegrationLambda]
+    Properties: 
+      ApiId: !Ref HttpAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${IntegrationLambda.Arn}/invocations
+        # Fn::Sub:
+        #   arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${IntegrationLambda.Arn}/invocations
+      PayloadFormatVersion: 2.0
+
+  MyAuthorizor:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties: 
+      Name: !Sub ${AWS::StackName}-Authorizer
+      ApiId: !Ref HttpAPI
+      AuthorizerType: JWT
+      IdentitySource: [$request.header.Authorization]
+      JwtConfiguration: 
+        Audience: [!Ref UserPoolClient]
+        Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+
+  MyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpAPI
+      RouteKey: "ANY /msgtype/{mtype}/encoding/{encode}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref MyAuthorizor
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref MyIntegration
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties: 
+      ApiId: !Ref HttpAPI
+      AutoDeploy: true
+      Description: Default stage
+      StageName: $default
+
+  # Permission for the HTTP gateway to invoke our function
+  HttpLambdaPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: [HttpAPI]
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref IntegrationLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpAPI}/*"
+
+Outputs:
+  UserPoolId:
+    Description: User Pool ID
+    Value: !Ref UserPool
+  AppClientId:
+    Description: App Client ID
+    Value: !Ref UserPoolClient
+  ApiGatewayId:
+    Description: API Gateway ID
+    Value: !Ref HttpAPI
