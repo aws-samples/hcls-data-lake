@@ -1,4 +1,0 @@
-url: https://files.pythonhosted.org/packages/6d/97/9903a942be1d3d7a193d643ef29c73ad300ab8594e01e6f8d23285bcf77a/hl7apy-1.3.3.tar.gz
-region: ca-central-1
-stack_name: myTestStack
-ingest_bucket: hl7v2-ingestion
