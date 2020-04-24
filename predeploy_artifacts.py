@@ -43,8 +43,8 @@ def get_bucket():
   create_bucket(artifactBucketName)
   ssm.put_parameter(
     Name=artifactBucketParam, 
-    Description='The name of the S3 bucket where we are keeping our .zip artifacts', 
-    Value=artifactBucketName, 
+    Description='Name of the S3 bucket holding .zip artifacts for the healthcare data lake', 
+    Value=artifactBucketName,
     Type="String",
     Overwrite=True)
   

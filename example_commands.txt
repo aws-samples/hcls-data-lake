@@ -1,4 +1,4 @@
-# Chanage your directory in the terminal to the parent folder (i.e. 'hcls-data-lake')
+# Change your directory in the terminal to the parent folder (i.e. 'hcls-data-lake')
 
 # Upload zip artifacts to an artifact bucket
 python predeploy_artifacts.py
@@ -9,7 +9,7 @@ aws cloudformation create-stack --stack-name $stack --template-body file://hcdl_
 
 # Updating the stack
 # To avoid updating the bucket we need to fetch the random name that we assigned
-bucketName=`aws cloudformation describe-stack-resource --stack-name $stack --logical-resource-id DataLakeBucket --query 'StackResourceDetail.PhysicalResourceId' --output text`
+bucketName=$(aws cloudformation describe-stack-resource --stack-name $stack --logical-resource-id DataLakeBucket --query 'StackResourceDetail.PhysicalResourceId' --output text)
 aws cloudformation update-stack --stack-name $stack --template-body file://hcdl_stack.yml --capabilities CAPABILITY_IAM --parameters ParameterKey=DataLakeBucketName,ParameterValue=$bucketName
 
 # Create a Cognito user

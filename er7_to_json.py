@@ -24,7 +24,7 @@ def add_child_element(parent_data, child_element):
 
   # Add element name (key) and value directly if it's a leaf type and then return
   if child_element.reference[0] == "leaf":
-    print(type(child_element.value)) 
+    logger.debug(type(child_element.value)) 
     if isinstance(child_element.value, str):
       parent_data[c_name] = child_element.value
     elif isinstance(child_element.value, hl7apy.base_datatypes.ST):
@@ -55,6 +55,7 @@ def decode_from_base64(encoded_message, encoding):
   message_bytes = base64.b64decode(base64_bytes)
   return message_bytes.decode(encoding)
 
+# This can be made more robust with some regex
 def fix_segment_terminators(message, segment_terminators):
   for st in segment_terminators:
     message = message.replace(st, "\r")
@@ -99,13 +100,13 @@ def lambda_handler(event, context):
     logger.info("Writing formatted message to staging")
     s3.put_object(
       Bucket=bucket,
-      Key="staging/hl7v2/{}_{}.json".format(time.time(), m_id),
+      Key="staging/hl7v2/{}.json".format(event_id),
       Body=json.dumps(json_msg)
     )
     
     return {
       'statusCode': 200,
-      'body': json.dumps("Message {} successfully written".format(m_id))
+      'body': json.dumps("Message {} successfully written ({})".format(m_id, event_id))
     }
     
   except Exception as e:
