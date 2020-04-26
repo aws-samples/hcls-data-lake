@@ -1,4 +1,4 @@
-Sample code for the series of healthcare data lake blog posts.  Check the branches for specific blog artifacts.
+Sample code for the second healthcare data lake blog post (URL_HERE)
 
 ## License
 
