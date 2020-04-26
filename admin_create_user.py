@@ -11,11 +11,8 @@ def main():
 
   # Extract variables from our stack output
   client = boto3.client('cloudformation')
-  response = client.describe_stacks(StackName=stackName)
-  outputs = response["Stacks"][0]["Outputs"]
-  
-  userPoolId = next(item for item in outputs if item["OutputKey"] == "UserPoolId")["OutputValue"]
-  appClientId = next(item for item in outputs if item["OutputKey"] == "AppClientId")["OutputValue"]
+  userPoolId = client.describe_stack_resource(StackName=stackName, LogicalResourceId='UserPool')["StackResourceDetail"]["PhysicalResourceId"]
+  appClientId = client.describe_stack_resource(StackName=stackName, LogicalResourceId='UserPoolClient')["StackResourceDetail"]["PhysicalResourceId"]
 
   client = boto3.client('cognito-idp')
   

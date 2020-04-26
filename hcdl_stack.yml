@@ -89,11 +89,21 @@ Resources:
         PolicyDocument:
           Version: 2012-10-17
           Statement:
-          # Get and put objects in our bucket
           - Effect: Allow
-            Action: ['s3:GetObject', 's3:PutObject']
+            Action: ['s3:GetObject', 's3:PutObject', 's3:PutObjectTagging']
             Resource:
             - !Join ['', ['arn:aws:s3:::', !Ref DataLakeBucket, /*]]
+      - PolicyName: dynamodb-data-catalog-access
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['dynamodb:*']
+            Resource:
+            - !Sub arn:aws:dynamodb:*:*:table/${PatientIdsTable}
+            - !Sub arn:aws:dynamodb:*:*:table/${PatientIdsTable}/index/*
+            - !Sub arn:aws:dynamodb:*:*:table/${PatientMessagesTable}
+            - !Sub arn:aws:dynamodb:*:*:table/${ParsingErrorsTable}
 
   Er7ToJsonLambda:
     Type: AWS::Lambda::Function
@@ -109,6 +119,9 @@ Resources:
       Environment:
         Variables:
           data_lake_bucket: !Ref DataLakeBucketName
+          patient_mapping_table: !Ref PatientIdsTable
+          message_table: !Ref PatientMessagesTable
+          error_table: !Ref ParsingErrorsTable
       Runtime: python3.8
       Timeout: 30
       MemorySize: 256
@@ -167,13 +180,54 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpAPI}/*
   
-Outputs:
-  UserPoolId:
-    Description: User Pool ID
-    Value: !Ref UserPool
-  AppClientId:
-    Description: App Client ID
-    Value: !Ref UserPoolClient
-  ApiGatewayId:
-    Description: API Gateway ID
-    Value: !Ref HttpAPI
+  #-------------------------------------------------------------- DynamoDB
+  PatientIdsTable:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+      - AttributeName: "uuid"
+        AttributeType: "S"
+      - AttributeName: "local_id"
+        AttributeType: "S"
+      KeySchema: 
+      - AttributeName: "uuid"
+        KeyType: "HASH"
+      - AttributeName: "local_id"
+        KeyType: "RANGE"
+      TableName: !Sub ${AWS::StackName}-patient_ids
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes: 
+      - IndexName: "local_index"
+        KeySchema: 
+        - AttributeName: "local_id"
+          KeyType: "HASH"
+        Projection: 
+          ProjectionType: KEYS_ONLY
+
+  PatientMessagesTable:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+      - AttributeName: "patient_uuid"
+        AttributeType: "S"
+      - AttributeName: "code"
+        AttributeType: "S"
+      KeySchema: 
+      - AttributeName: "patient_uuid"
+        KeyType: "HASH"
+      - AttributeName: "code"
+        KeyType: "RANGE"
+      TableName: !Sub ${AWS::StackName}-patient_messages
+      BillingMode: PAY_PER_REQUEST
+
+  ParsingErrorsTable:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+      - AttributeName: "s3_key"
+        AttributeType: "S"
+      KeySchema: 
+      - AttributeName: "s3_key"
+        KeyType: "HASH"
+      TableName: !Sub ${AWS::StackName}-parsing_errors
+      BillingMode: PAY_PER_REQUEST
