@@ -4,7 +4,7 @@
 python predeploy_artifacts.py
 
 # Create the stack
-stack="testStack2"
+stack="testStack"
 aws cloudformation create-stack --stack-name $stack --template-body file://hcdl_stack.yml --capabilities CAPABILITY_IAM --parameters ParameterKey=DataLakeBucketName,ParameterValue=healthcare-data-lake-$RANDOM$RANDOM
 
 # Updating the stack
@@ -20,5 +20,4 @@ username=$(aws ssm get-parameter --name /healthcare-data-lake/$stack/example-use
 password=$(aws ssm get-parameter --name /healthcare-data-lake/$stack/example-user/password --with-decryption --query 'Parameter.Value' --output text)
 gatewayId=$(aws cloudformation describe-stack-resource --stack-name $stack --logical-resource-id HttpAPI --query 'StackResourceDetail.PhysicalResourceId' --output text)
 clientAppId=$(aws cloudformation describe-stack-resource --stack-name $stack --logical-resource-id UserPoolClient --query 'StackResourceDetail.PhysicalResourceId' --output text)
-
 python test_er7_msg.py -s $stack -u $username -p $password -g $gatewayId -c $clientAppId
