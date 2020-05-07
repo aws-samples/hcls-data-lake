@@ -100,10 +100,8 @@ Resources:
           - Effect: Allow
             Action: ['dynamodb:*']
             Resource:
-            - !Sub arn:aws:dynamodb:*:*:table/${PatientIdsTable}
-            - !Sub arn:aws:dynamodb:*:*:table/${PatientIdsTable}/index/*
-            - !Sub arn:aws:dynamodb:*:*:table/${PatientMessagesTable}
-            - !Sub arn:aws:dynamodb:*:*:table/${ParsingErrorsTable}
+            - !Sub arn:aws:dynamodb:*:*:table/${ApplicationTable}
+            - !Sub arn:aws:dynamodb:*:*:table/${ApplicationTable}/index/*
 
   Er7ToJsonLambda:
     Type: AWS::Lambda::Function
@@ -119,9 +117,7 @@ Resources:
       Environment:
         Variables:
           data_lake_bucket: !Ref DataLakeBucketName
-          patient_mapping_table: !Ref PatientIdsTable
-          message_table: !Ref PatientMessagesTable
-          error_table: !Ref ParsingErrorsTable
+          application_table: !Ref ApplicationTable
       Runtime: python3.8
       Timeout: 30
       MemorySize: 256
