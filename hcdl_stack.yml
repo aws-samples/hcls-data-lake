@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: 'Healthcare data lake'
 
 Parameters:
-  ArtifactBucket: 
+  ArtifactBucket:
     Description: Bucket with artifacts such as Lambda functions and external libraries
     Type: AWS::SSM::Parameter::Value<String>
     Default: /healthcare-data-lake/artifact-bucket
@@ -10,7 +10,7 @@ Parameters:
     Description: Key for our HL7 parsing library
     Type: AWS::SSM::Parameter::Value<String>
     Default: /healthcare-data-lake/hl7v2-parsing-Lambda-Layer
-  Hl7ParsingFuncKey: 
+  Hl7ParsingFuncKey:
     Description: Key for our HL7 parsing Lambda function
     Type: AWS::SSM::Parameter::Value<String>
     Default: /healthcare-data-lake/hl7v2-parsing-Lambda
@@ -24,19 +24,19 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Ref DataLakeBucketName
-      
+
       # Encryption at rest
-      BucketEncryption: 
+      BucketEncryption:
         ServerSideEncryptionConfiguration:
         - ServerSideEncryptionByDefault:
             SSEAlgorithm: AES256
-      
+
       # Block all public access
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         IgnorePublicAcls: true
         BlockPublicPolicy: true
-        RestrictPublicBuckets: true   
+        RestrictPublicBuckets: true
 
   #-------------------------------------------------------------- Cognito
   UserPool:
@@ -46,7 +46,7 @@ Resources:
         AllowAdminCreateUserOnly: true
       UserPoolName: !Sub ${AWS::StackName}-UserPool
       UsernameAttributes: [email]
-      
+
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
@@ -58,31 +58,31 @@ Resources:
       - ALLOW_ADMIN_USER_PASSWORD_AUTH
       - ALLOW_REFRESH_TOKEN_AUTH
       PreventUserExistenceErrors: ENABLED
-  
+
   #-------------------------------------------------------------- Lambda functions
   Hl7apyLayer:
     Type: AWS::Lambda::LayerVersion
-    Properties: 
+    Properties:
       CompatibleRuntimes: [python2.7, python3.6, python3.7, python3.8]
-      Content: 
+      Content:
         S3Bucket: !Ref ArtifactBucket
         S3Key: !Ref Hl7ParsingLibKey
       LayerName: hl7apy
       Description: "HL7apy parser library"
       LicenseInfo: MIT
-  
+
   # Role assumed by our Lambda parsing function, provides permission to access the data lake bucket
   Er7ToJsonLambdaRole:
     Type: AWS::IAM::Role
-    Properties: 
-      AssumeRolePolicyDocument: 
+    Properties:
+      AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
         - Effect: Allow
           Principal:
             Service: [lambda.amazonaws.com]
           Action: ['sts:AssumeRole']
-      ManagedPolicyArns: 
+      ManagedPolicyArns:
       - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
       Policies:
       - PolicyName: data-lake-bucket-access
@@ -107,7 +107,7 @@ Resources:
 
   Er7ToJsonLambda:
     Type: AWS::Lambda::Function
-    Properties: 
+    Properties:
       FunctionName: !Sub ${AWS::StackName}_er7_to_json
       Code:
         S3Bucket: !Ref ArtifactBucket
@@ -135,16 +135,16 @@ Resources:
 
   DefaultStage:
     Type: AWS::ApiGatewayV2::Stage
-    Properties: 
+    Properties:
       ApiId: !Ref HttpAPI
       AutoDeploy: true
       Description: Default stage
       StageName: $default
-  
+
   Er7ToJsonIntegration:
     Type: AWS::ApiGatewayV2::Integration
     DependsOn: [Er7ToJsonLambda]
-    Properties: 
+    Properties:
       ApiId: !Ref HttpAPI
       IntegrationType: AWS_PROXY
       IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Er7ToJsonLambda.Arn}/invocations
@@ -152,12 +152,12 @@ Resources:
 
   MyAuthorizor:
     Type: AWS::ApiGatewayV2::Authorizer
-    Properties: 
+    Properties:
       Name: !Sub ${AWS::StackName}-Authorizer
       ApiId: !Ref HttpAPI
       AuthorizerType: JWT
       IdentitySource: [$request.header.Authorization]
-      JwtConfiguration: 
+      JwtConfiguration:
         Audience: [!Ref UserPoolClient]
         Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
 
@@ -179,55 +179,27 @@ Resources:
       FunctionName: !Ref Er7ToJsonLambda
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpAPI}/*
-  
+
   #-------------------------------------------------------------- DynamoDB
-  PatientIdsTable:
+  ApplicationTable:
     Type: AWS::DynamoDB::Table
-    Properties: 
-      AttributeDefinitions: 
-      - AttributeName: "uuid"
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: "PK"
         AttributeType: "S"
-      - AttributeName: "local_id"
+      - AttributeName: "SK"
         AttributeType: "S"
-      KeySchema: 
-      - AttributeName: "uuid"
+      KeySchema:
+      - AttributeName: "PK"
         KeyType: "HASH"
-      - AttributeName: "local_id"
+      - AttributeName: "SK"
         KeyType: "RANGE"
-      TableName: !Sub ${AWS::StackName}-patient_ids
+      TableName: !Sub ${AWS::StackName}-application_table
       BillingMode: PAY_PER_REQUEST
-      GlobalSecondaryIndexes: 
-      - IndexName: "local_index"
-        KeySchema: 
-        - AttributeName: "local_id"
+      GlobalSecondaryIndexes:
+      - IndexName: "GSI1"
+        KeySchema:
+        - AttributeName: "GSI1PK"
           KeyType: "HASH"
-        Projection: 
+        Projection:
           ProjectionType: KEYS_ONLY
-
-  PatientMessagesTable:
-    Type: AWS::DynamoDB::Table
-    Properties: 
-      AttributeDefinitions: 
-      - AttributeName: "patient_uuid"
-        AttributeType: "S"
-      - AttributeName: "code"
-        AttributeType: "S"
-      KeySchema: 
-      - AttributeName: "patient_uuid"
-        KeyType: "HASH"
-      - AttributeName: "code"
-        KeyType: "RANGE"
-      TableName: !Sub ${AWS::StackName}-patient_messages
-      BillingMode: PAY_PER_REQUEST
-
-  ParsingErrorsTable:
-    Type: AWS::DynamoDB::Table
-    Properties: 
-      AttributeDefinitions: 
-      - AttributeName: "s3_key"
-        AttributeType: "S"
-      KeySchema: 
-      - AttributeName: "s3_key"
-        KeyType: "HASH"
-      TableName: !Sub ${AWS::StackName}-parsing_errors
-      BillingMode: PAY_PER_REQUEST
