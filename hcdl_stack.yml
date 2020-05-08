@@ -181,21 +181,23 @@ Resources:
     Type: AWS::DynamoDB::Table
     Properties:
       AttributeDefinitions:
-      - AttributeName: "PK"
-        AttributeType: "S"
-      - AttributeName: "SK"
-        AttributeType: "S"
+        - AttributeName: "PK"
+          AttributeType: "S"
+        - AttributeName: "SK"
+          AttributeType: "S"
+        - AttributeName: "GSI1PK"
+          AttributeType: "S"
       KeySchema:
-      - AttributeName: "PK"
-        KeyType: "HASH"
-      - AttributeName: "SK"
-        KeyType: "RANGE"
+        - AttributeName: "PK"
+          KeyType: "HASH"
+        - AttributeName: "SK"
+          KeyType: "RANGE"
       TableName: !Sub ${AWS::StackName}-application_table
       BillingMode: PAY_PER_REQUEST
       GlobalSecondaryIndexes:
-      - IndexName: "GSI1"
-        KeySchema:
-        - AttributeName: "GSI1PK"
-          KeyType: "HASH"
-        Projection:
-          ProjectionType: KEYS_ONLY
+        - IndexName: "GSI1"
+          KeySchema:
+            - AttributeName: "GSI1PK"
+              KeyType: "HASH"
+          Projection:
+            ProjectionType: KEYS_ONLY
