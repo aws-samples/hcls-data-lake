@@ -9,11 +9,14 @@ from botocore.exceptions import ClientError
 
 #---------------------------------------------------- Globals
 hl7apyUrl="https://files.pythonhosted.org/packages/6d/97/9903a942be1d3d7a193d643ef29c73ad300ab8594e01e6f8d23285bcf77a/hl7apy-1.3.3.tar.gz"
-parsingLambda="er7_to_json.py"
+parsingLambda="lambdas/hl7_parse_er7_to_json.py"
+hl7LandingLambda="lambdas/hl7_ingest_to_raw.py"
+hl7CleaningLambda="lambdas/hl7_clean_er7.py"
 
 ssm = boto3.client('ssm')
 
 #---------------------------------------------------- Main
+# TODO loop through the lambda folder and upload programatically
 def main():
   # Set working directory to file location
   os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -25,8 +28,15 @@ def main():
   print ("Processing Lambda Layer")
   upload_lambda_library(bucketName)
 
+  print("Zip and upload our ingest-to-raw function "+hl7LandingLambda)
+  upload_lambda_function(hl7LandingLambda, bucketName, "hl7v2-raw-Lambda")
+
+  print("Zip and upload our cleaning function "+hl7CleaningLambda)
+  upload_lambda_function(hl7CleaningLambda, bucketName, "hl7v2-cleaning-Lambda")
+
   print("Zip and upload our parsing function "+parsingLambda)
-  upload_lambda_function(bucketName)
+  upload_lambda_function(parsingLambda, bucketName, "hl7v2-parsing-Lambda")
+
   
   print("Done")
 
@@ -136,15 +146,17 @@ def upload_file(file_name, bucket, object_name=None, wait=True):
 
   return True
 
-def upload_lambda_function(bucketName):
-  lambdaKey = parsingLambda.replace(".py",".zip")
-  zipfile.ZipFile(lambdaKey, mode='w').write(parsingLambda)
+def upload_lambda_function(functionFile, bucketName, parameterName):
+  functionName = os.path.basename(functionFile)
+  lambdaKey = functionName.replace(".py",".zip")
+  
+  zipfile.ZipFile(lambdaKey, mode='w').write(functionFile, arcname=functionName)
   upload_file(lambdaKey, bucketName)
   
   # Put in the parameter
   ssm.put_parameter(
-    Name="/healthcare-data-lake/hl7v2-parsing-Lambda", 
-    Description='The S3 key for the the HL7v2 parsing Lambda function', 
+    Name="/healthcare-data-lake/"+parameterName, 
+    Description='The S3 key for a data lake Lambda function', 
     Value=lambdaKey, 
     Type="String",
     Overwrite=True)

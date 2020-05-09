@@ -14,9 +14,21 @@ Parameters:
     Description: Key for our HL7 parsing Lambda function
     Type: AWS::SSM::Parameter::Value<String>
     Default: /healthcare-data-lake/hl7v2-parsing-Lambda
+  Hl7IngestToRawFuncKey: 
+    Description: Key for our HL7 raw Lambda function
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /healthcare-data-lake/hl7v2-raw-Lambda
+  Hl7CleanEr7FuncKey: 
+    Description: Key for our HL7 cleaning Lambda function
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /healthcare-data-lake/hl7v2-cleaning-Lambda
   DataLakeBucketName:
     Description: Bucket for ingesting and processing healthcare data
     Type: String
+  LogRetention:
+    Description: Days to to keep logs
+    Type: Number
+    Default: 1
 
 Resources:
   #-------------------------------------------------------------- Data Lake bucket
@@ -24,15 +36,11 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Ref DataLakeBucketName
-      
-      # Encryption at rest
-      BucketEncryption: 
+      BucketEncryption: # Encryption at rest
         ServerSideEncryptionConfiguration:
         - ServerSideEncryptionByDefault:
             SSEAlgorithm: AES256
-      
-      # Block all public access
-      PublicAccessBlockConfiguration:
+      PublicAccessBlockConfiguration: # Block all public access
         BlockPublicAcls: true
         IgnorePublicAcls: true
         BlockPublicPolicy: true
@@ -71,8 +79,8 @@ Resources:
       Description: "HL7apy parser library"
       LicenseInfo: MIT
   
-  # Role assumed by our Lambda parsing function, provides permission to access the data lake bucket
-  Er7ToJsonLambdaRole:
+  # Role assumed by Lambda functions which access the data lake bucket
+  DataLakeLambdaRole:
     Type: AWS::IAM::Role
     Properties: 
       AssumeRolePolicyDocument: 
@@ -93,38 +101,270 @@ Resources:
             Action: ['s3:GetObject', 's3:PutObject', 's3:PutObjectTagging']
             Resource:
             - !Join ['', ['arn:aws:s3:::', !Ref DataLakeBucket, /*]]
-      - PolicyName: dynamodb-data-catalog-access
-        PolicyDocument:
-          Version: 2012-10-17
-          Statement:
-          - Effect: Allow
-            Action: ['dynamodb:*']
-            Resource:
-            - !Sub arn:aws:dynamodb:*:*:table/${PatientIdsTable}
-            - !Sub arn:aws:dynamodb:*:*:table/${PatientIdsTable}/index/*
-            - !Sub arn:aws:dynamodb:*:*:table/${PatientMessagesTable}
-            - !Sub arn:aws:dynamodb:*:*:table/${ParsingErrorsTable}
 
-  Er7ToJsonLambda:
+  # Put into S3 raw zone and store upload parameters as object metadata
+  Hl7IngestToRawLambda:
     Type: AWS::Lambda::Function
     Properties: 
-      FunctionName: !Sub ${AWS::StackName}_er7_to_json
+      FunctionName: !Sub ${AWS::StackName}_hl7_ingest_raw
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref Hl7IngestToRawFuncKey
+      Description: Decodes from Base64 and puts into raw zone
+      Handler: hl7_ingest_to_raw.lambda_handler
+      Role: !GetAtt DataLakeLambdaRole.Arn
+      Environment:
+        Variables:
+          data_lake_bucket: !Ref DataLakeBucketName
+      Runtime: python3.8
+
+  Hl7IngestToRawLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref Hl7IngestToRawLambda]]
+      RetentionInDays: !Ref LogRetention
+
+  # Clean the ER7 message 
+  Hl7CleanEr7Lambda:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Sub ${AWS::StackName}_hl7_clean_er7
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref Hl7CleanEr7FuncKey
+      Description: Cleans ER7 messages using provided input
+      Handler: hl7_clean_er7.lambda_handler
+      Role: !GetAtt DataLakeLambdaRole.Arn
+      Environment:
+        Variables:
+          data_lake_bucket: !Ref DataLakeBucketName
+      Runtime: python3.8
+
+  Hl7CleanEr7LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref Hl7CleanEr7Lambda]]
+      RetentionInDays: !Ref LogRetention
+
+  # Convert from ER7 to JSON
+  Hl7ParseEr7ToJsonLambda:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Sub ${AWS::StackName}_hl7_er7_to_json
       Code:
         S3Bucket: !Ref ArtifactBucket
         S3Key: !Ref Hl7ParsingFuncKey
       Description: HL7 converter from ER7 to JSON
-      Handler: er7_to_json.lambda_handler
+      Handler: hl7_parse_er7_to_json.lambda_handler
       Layers: [!Ref Hl7apyLayer]
-      Role: !GetAtt Er7ToJsonLambdaRole.Arn
+      Role: !GetAtt DataLakeLambdaRole.Arn
       Environment:
         Variables:
           data_lake_bucket: !Ref DataLakeBucketName
-          patient_mapping_table: !Ref PatientIdsTable
-          message_table: !Ref PatientMessagesTable
-          error_table: !Ref ParsingErrorsTable
+          data_lake_prefix: 'staging/hl7v2/'
       Runtime: python3.8
       Timeout: 30
-      MemorySize: 256
+      
+  Hl7ParseEr7ToJsonLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref Hl7ParseEr7ToJsonLambda]]
+      RetentionInDays: !Ref LogRetention
+      
+  #-------------------------------------------------------------- Step Function
+  StatesExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: "Allow"
+          Principal:
+            Service:
+            - !Sub states.${AWS::Region}.amazonaws.com
+          Action: "sts:AssumeRole"
+      Path: "/"
+      Policies:
+      - PolicyName: StatesExecutionPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action: ["lambda:InvokeFunction"]
+            Resource: "*"
+      - PolicyName: LoggingPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action: 
+            - "logs:CreateLogDelivery"
+            - "logs:GetLogDelivery"
+            - "logs:UpdateLogDelivery"
+            - "logs:DeleteLogDelivery"
+            - "logs:ListLogDeliveries"
+            - "logs:PutResourcePolicy"
+            - "logs:DescribeResourcePolicies"
+            - "logs:DescribeLogGroups"
+            Resource: "*"
+
+  # TODO: Logging permission is there, but logging still needs to be configured (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-stepfunctions-statemachine-loggingconfiguration.html)
+  RawToStagingStateMachine:
+    Type: "AWS::StepFunctions::StateMachine"
+    Properties:
+      DefinitionString:
+        Fn::Sub:
+          - |-
+            {
+              "Comment": "Moves objects from raw to staging in our healthcare data lake",
+              "StartAt": "DetermineProtocol",
+              "States": {
+                "DetermineProtocol": {
+                  "Type": "Choice",
+                  "Choices": [
+                    {
+                      "And": [
+                        {
+                          "Variable": "$.key",
+                          "StringGreaterThan": "raw/hl7v2/"
+                        },
+                        {
+                          "Variable": "$.key",
+                          "StringLessThan": "raw/hl7v2/~"
+                        }
+                      ],
+                      "Next": "CleanEr7"
+                    }
+                  ],
+                  "Default": "Unknown"
+                },
+                "CleanEr7": {
+                  "Type": "Task",
+                  "Resource": "${cleanEr7LambdaArn}",
+                  "Next": "ParseEr7ToJson"
+                },
+                "ParseEr7ToJson": {
+                  "Type": "Task",
+                  "Resource": "${parseEr7LambdaArn}",
+                  "Catch": [ {
+                        "ErrorEquals": [ "Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
+                        "Next": "Unparseable"
+                     } ],
+                  "End": true
+                },
+                "Unparseable":{
+                  "Type": "Pass",
+                  "End": true
+                },
+                "Unknown": {
+                  "Type": "Pass",
+                  "End": true
+                }
+              }
+            }
+          - cleanEr7LambdaArn: !GetAtt [ Hl7CleanEr7Lambda, Arn ]
+            parseEr7LambdaArn: !GetAtt [ Hl7ParseEr7ToJsonLambda, Arn ]
+      StateMachineType: EXPRESS
+      RoleArn: !GetAtt [ StatesExecutionRole, Arn ]
+      
+  #-------------------------------------------------------------- Trigger our Step Function
+  # Bucket to hold data lake CloudTrail logs
+  DataLakeCloudTrailBucket: 
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${DataLakeBucket}-ct-logs
+      BucketEncryption: # Encryption at rest
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration: # Block all public access
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true   
+  
+  # Policy to allow CloudTrail service to access our CloudTrail logging bucket
+  DataLakeCloudTrailBucketPolicy: 
+    Type: AWS::S3::BucketPolicy
+    Properties: 
+      Bucket: 
+        Ref: DataLakeCloudTrailBucket
+      PolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+        - Sid: "AWSCloudTrailAclCheck"
+          Effect: "Allow"
+          Principal: 
+            Service: "cloudtrail.amazonaws.com"
+          Action: "s3:GetBucketAcl"
+          Resource: !Sub arn:aws:s3:::${DataLakeCloudTrailBucket}
+        - Sid: "AWSCloudTrailWrite"
+          Effect: "Allow"
+          Principal: 
+            Service: "cloudtrail.amazonaws.com"
+          Action: "s3:PutObject"
+          Resource: !Sub arn:aws:s3:::${DataLakeCloudTrailBucket}/AWSLogs/${AWS::AccountId}/*
+          Condition: 
+            StringEquals:
+              s3:x-amz-acl: "bucket-owner-full-control"
+    
+  # Bucket trail is needed for API events in Amazon S3 to match the CloudWatch Events rule
+  DataLakeRawTrail:
+    DependsOn: # Put the trail as late as possible so it won't collect data during stack creation which would impede rollback
+    - DataLakeCloudTrailBucketPolicy
+    - DataLakeRawEvent
+    Type: AWS::CloudTrail::Trail
+    Properties: 
+      EventSelectors:
+      - DataResources: 
+        - Type: 'AWS::S3::Object'
+          Values:
+          - !Sub arn:aws:s3:::${DataLakeBucket}/raw/ # We will use the same trail for all data types and choose in the step function
+        ReadWriteType: WriteOnly
+      IsLogging: true
+      S3BucketName: !Ref DataLakeCloudTrailBucket
+      TrailName: !Sub ${AWS::StackName}-DataLakeBucket
+
+  DataLakeRawEventRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: "Allow"
+          Principal:
+            Service:
+            - !Sub states.${AWS::Region}.amazonaws.com
+            - events.amazonaws.com
+          Action: "sts:AssumeRole"
+      Path: /service-role/
+      Policies:
+      - PolicyName: TriggerStepFunction
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action: ["states:StartExecution"]
+            Resource: !Ref RawToStagingStateMachine
+
+  # CloudWatch rule to trigger 
+  DataLakeRawEvent:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Monitor our healthcare data lake bucket trail for raw PutObject events and trigger step function
+      EventPattern:
+        source: [aws.s3]
+        detail-type: [AWS API Call via CloudTrail]
+        detail:
+          eventSource: [s3.amazonaws.com]
+          eventName: [PutObject]
+          requestParameters:
+            bucketName: [!Ref DataLakeBucket]
+      Targets: 
+      - Arn: !Ref RawToStagingStateMachine
+        Id: !Sub ${DataLakeBucket}-cw-event
+        RoleArn: !GetAtt DataLakeRawEventRole.Arn
+        InputPath: $.detail.requestParameters # Just need the bucket and key
 
   #-------------------------------------------------------------- API Gateway
   HttpAPI:
@@ -141,13 +381,13 @@ Resources:
       Description: Default stage
       StageName: $default
   
-  Er7ToJsonIntegration:
+  Hl7IngestToRawIntegration:
     Type: AWS::ApiGatewayV2::Integration
-    DependsOn: [Er7ToJsonLambda]
+    DependsOn: [Hl7IngestToRawLambda]
     Properties: 
       ApiId: !Ref HttpAPI
       IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Er7ToJsonLambda.Arn}/invocations
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Hl7IngestToRawLambda.Arn}/invocations
       PayloadFormatVersion: 2.0
 
   MyAuthorizor:
@@ -168,66 +408,14 @@ Resources:
       RouteKey: "POST /hl7v2/er7"
       AuthorizationType: JWT
       AuthorizerId: !Ref MyAuthorizor
-      Target: !Join [/, [integrations, !Ref Er7ToJsonIntegration]]
+      Target: !Join [/, [integrations, !Ref Hl7IngestToRawIntegration]]
 
   # Permission for the HTTP gateway to invoke our function
-  HttpEr7ToJsonLambdaPermission:
+  HttpHl7ParseEr7ToJsonLambdaPermission:
     Type: AWS::Lambda::Permission
     DependsOn: [HttpAPI]
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref Er7ToJsonLambda
+      FunctionName: !Ref Hl7IngestToRawLambda
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpAPI}/*
-  
-  #-------------------------------------------------------------- DynamoDB
-  PatientIdsTable:
-    Type: AWS::DynamoDB::Table
-    Properties: 
-      AttributeDefinitions: 
-      - AttributeName: "uuid"
-        AttributeType: "S"
-      - AttributeName: "local_id"
-        AttributeType: "S"
-      KeySchema: 
-      - AttributeName: "uuid"
-        KeyType: "HASH"
-      - AttributeName: "local_id"
-        KeyType: "RANGE"
-      TableName: !Sub ${AWS::StackName}-patient_ids
-      BillingMode: PAY_PER_REQUEST
-      GlobalSecondaryIndexes: 
-      - IndexName: "local_index"
-        KeySchema: 
-        - AttributeName: "local_id"
-          KeyType: "HASH"
-        Projection: 
-          ProjectionType: KEYS_ONLY
-
-  PatientMessagesTable:
-    Type: AWS::DynamoDB::Table
-    Properties: 
-      AttributeDefinitions: 
-      - AttributeName: "patient_uuid"
-        AttributeType: "S"
-      - AttributeName: "code"
-        AttributeType: "S"
-      KeySchema: 
-      - AttributeName: "patient_uuid"
-        KeyType: "HASH"
-      - AttributeName: "code"
-        KeyType: "RANGE"
-      TableName: !Sub ${AWS::StackName}-patient_messages
-      BillingMode: PAY_PER_REQUEST
-
-  ParsingErrorsTable:
-    Type: AWS::DynamoDB::Table
-    Properties: 
-      AttributeDefinitions: 
-      - AttributeName: "s3_key"
-        AttributeType: "S"
-      KeySchema: 
-      - AttributeName: "s3_key"
-        KeyType: "HASH"
-      TableName: !Sub ${AWS::StackName}-parsing_errors
-      BillingMode: PAY_PER_REQUEST

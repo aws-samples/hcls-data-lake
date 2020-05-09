@@ -91,7 +91,7 @@ def sendRequest(idToken, apiGatewayId, msg, encoding, segTerm=None):
   url="https://"+apiGatewayId+".execute-api."+region_name+".amazonaws.com/"+route
 
   if segTerm is not None:
-    data = json.dumps({'msg': encodeToBase64(msg, encoding), "encoding": encoding, "segTerm": ["\r\n", "\n"]})
+    data = json.dumps({'msg': encodeToBase64(msg, encoding), "encoding": encoding, "seg-term": ["\r\n", "\n"]})
   else:
     data = json.dumps({'msg': encodeToBase64(msg, encoding), "encoding": encoding})
   

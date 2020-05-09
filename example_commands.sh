@@ -4,7 +4,7 @@
 python predeploy_artifacts.py
 
 # Create the stack
-stack="testStack"
+stack="testStack2"
 aws cloudformation create-stack --stack-name $stack --template-body file://hcdl_stack.yml --capabilities CAPABILITY_IAM --parameters ParameterKey=DataLakeBucketName,ParameterValue=healthcare-data-lake-$RANDOM$RANDOM
 
 # Updating the stack
