@@ -7,7 +7,7 @@ import uuid
 import time
 import base64
 import os
-from .data_access_layer import DynamoDB
+from data_access_layer import DynamoDB
 
 
 logger = logging.getLogger()

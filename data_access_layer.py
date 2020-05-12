@@ -1,5 +1,6 @@
 import boto3
 import logging
+import uuid
 from boto3.dynamodb.conditions import Key, Attr
 from datetime import datetime
 
@@ -11,15 +12,15 @@ logger.setLevel(logging.INFO)
 class DynamoDB():
     def __init__(self, dynamodb_table_name):
         self.dynamodb = self.dynamodb_resource()
-        self.table = self.dynamodb_table()
+        self.table = self.dynamodb_table(dynamodb_table_name)
 
     def dynamodb_resource(self):
         return boto3.resource('dynamodb')
 
-    def dynamodb_table(self):
-        return self.dynamodb.Table(self.dynamodb_table_name)
+    def dynamodb_table(self, dynamodb_table_name):
+        return self.dynamodb.Table(dynamodb_table_name)
 
-    def get_global_id(pids: List[str]):
+    def get_global_id(self, pids):
         g_id = None
         no_global = []
 
@@ -41,7 +42,8 @@ class DynamoDB():
             response = self.table.put_item(
                 Item={
                     'PK': g_id,
-                    'SK': pid
+                    'SK': pid,
+                    'type': 'PatientIDs',
                 }
             )
         return g_id
@@ -69,7 +71,8 @@ class DynamoDB():
             Item={
                 'PK': error_key,
                 'SK': datetime.now().isoformat(),
-                'type': message_type,
+                'message_type': message_type,
                 'provided_id': msg_id,
+                'type': 'MessageError',
             }
         )
