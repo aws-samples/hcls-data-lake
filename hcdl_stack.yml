@@ -170,6 +170,17 @@ Resources:
     Properties:
       LogGroupName: !Join ['/', ['/aws/lambda', !Ref Hl7ParseEr7ToJsonLambda]]
       RetentionInDays: !Ref LogRetention
+  
+  #-------------------------------------------------------------- SNS topics for other services to attach to
+  Hl7SuccessfulParseTopic:
+    Type: AWS::SNS::Topic
+    Properties: 
+      TopicName: !Sub ${AWS::StackName}-Hl7SuccessfulParse
+      
+  Hl7FailedParseTopic:
+    Type: AWS::SNS::Topic
+    Properties: 
+      TopicName: !Sub ${AWS::StackName}-Hl7FailedParse
       
   #-------------------------------------------------------------- Step Function
   StatesExecutionRole:
@@ -192,6 +203,13 @@ Resources:
           - Effect: Allow
             Action: ["lambda:InvokeFunction"]
             Resource: "*"
+      - PolicyName: SNSPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action: ["sns:*"]
+            Resource: "*"
       - PolicyName: LoggingPolicy
         PolicyDocument:
           Version: "2012-10-17"
@@ -208,7 +226,6 @@ Resources:
             - "logs:DescribeLogGroups"
             Resource: "*"
 
-  # TODO: Logging permission is there, but logging still needs to be configured (https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-stepfunctions-statemachine-loggingconfiguration.html)
   RawToStagingStateMachine:
     Type: "AWS::StepFunctions::StateMachine"
     Properties:
@@ -236,7 +253,7 @@ Resources:
                       "Next": "CleanEr7"
                     }
                   ],
-                  "Default": "Unknown"
+                  "Default": "UnknownProtocol"
                 },
                 "CleanEr7": {
                   "Type": "Task",
@@ -247,16 +264,30 @@ Resources:
                   "Type": "Task",
                   "Resource": "${parseEr7LambdaArn}",
                   "Catch": [ {
-                        "ErrorEquals": [ "Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
+                        "ErrorEquals": [ "KeyError"],
                         "Next": "Unparseable"
                      } ],
+                  "Next": "Hl7Parsed"
+                },
+                "Hl7Parsed": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::sns:publish",
+                  "Parameters": {
+                    "TopicArn": "${hl7SucceedParse}",
+                    "Message.$": "$"
+                  },
+                  "End": true
+                },                
+                "Unparseable": {
+                  "Type": "Task",
+                  "Resource": "arn:aws:states:::sns:publish",
+                  "Parameters": {
+                    "TopicArn": "${hl7FailedParse}",
+                    "Message.$": "$"
+                  },
                   "End": true
                 },
-                "Unparseable":{
-                  "Type": "Pass",
-                  "End": true
-                },
-                "Unknown": {
+                "UnknownProtocol": {
                   "Type": "Pass",
                   "End": true
                 }
@@ -264,8 +295,22 @@ Resources:
             }
           - cleanEr7LambdaArn: !GetAtt [ Hl7CleanEr7Lambda, Arn ]
             parseEr7LambdaArn: !GetAtt [ Hl7ParseEr7ToJsonLambda, Arn ]
+            hl7FailedParse: !Ref Hl7FailedParseTopic
+            hl7SucceedParse: !Ref Hl7SuccessfulParseTopic
       StateMachineType: EXPRESS
+      LoggingConfiguration:
+        Destinations: 
+        - CloudWatchLogsLogGroup: 
+            LogGroupArn: !GetAtt [RawToStagingStateMachineLogGroup, Arn]
+        IncludeExecutionData: true
+        Level: ALL
       RoleArn: !GetAtt [ StatesExecutionRole, Arn ]
+
+  RawToStagingStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/states/${AWS::StackName}-RawToStagingStateMachine'
+      RetentionInDays: !Ref LogRetention
       
   #-------------------------------------------------------------- Trigger our Step Function
   # Bucket to hold data lake CloudTrail logs
