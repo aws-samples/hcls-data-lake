@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: 'Healthcare data lake'
 
 Parameters:
-  ArtifactBucket: 
+  ArtifactBucket:
     Description: Bucket with artifacts such as Lambda functions and external libraries
     Type: AWS::SSM::Parameter::Value<String>
     Default: /healthcare-data-lake/artifact-bucket
@@ -10,15 +10,15 @@ Parameters:
     Description: Key for our HL7 parsing library
     Type: AWS::SSM::Parameter::Value<String>
     Default: /healthcare-data-lake/hl7v2-parsing-Lambda-Layer
-  Hl7ParsingFuncKey: 
+  Hl7ParsingFuncKey:
     Description: Key for our HL7 parsing Lambda function
     Type: AWS::SSM::Parameter::Value<String>
     Default: /healthcare-data-lake/hl7v2-parsing-Lambda
-  Hl7IngestToRawFuncKey: 
+  Hl7IngestToRawFuncKey:
     Description: Key for our HL7 raw Lambda function
     Type: AWS::SSM::Parameter::Value<String>
     Default: /healthcare-data-lake/hl7v2-raw-Lambda
-  Hl7CleanEr7FuncKey: 
+  Hl7CleanEr7FuncKey:
     Description: Key for our HL7 cleaning Lambda function
     Type: AWS::SSM::Parameter::Value<String>
     Default: /healthcare-data-lake/hl7v2-cleaning-Lambda
@@ -29,6 +29,9 @@ Parameters:
     Description: Days to to keep logs
     Type: Number
     Default: 1
+  PatientMatcherApiArn:
+    Description: ARN of Patient Matcher Internal API Lambda Function
+    Type: String
 
 Resources:
   #-------------------------------------------------------------- Data Lake bucket
@@ -44,7 +47,7 @@ Resources:
         BlockPublicAcls: true
         IgnorePublicAcls: true
         BlockPublicPolicy: true
-        RestrictPublicBuckets: true   
+        RestrictPublicBuckets: true
 
   #-------------------------------------------------------------- Cognito
   UserPool:
@@ -54,7 +57,7 @@ Resources:
         AllowAdminCreateUserOnly: true
       UserPoolName: !Sub ${AWS::StackName}-UserPool
       UsernameAttributes: [email]
-      
+
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
@@ -66,31 +69,31 @@ Resources:
       - ALLOW_ADMIN_USER_PASSWORD_AUTH
       - ALLOW_REFRESH_TOKEN_AUTH
       PreventUserExistenceErrors: ENABLED
-  
+
   #-------------------------------------------------------------- Lambda functions
   Hl7apyLayer:
     Type: AWS::Lambda::LayerVersion
-    Properties: 
+    Properties:
       CompatibleRuntimes: [python2.7, python3.6, python3.7, python3.8]
-      Content: 
+      Content:
         S3Bucket: !Ref ArtifactBucket
         S3Key: !Ref Hl7ParsingLibKey
       LayerName: hl7apy
       Description: "HL7apy parser library"
       LicenseInfo: MIT
-  
+
   # Role assumed by Lambda functions which access the data lake bucket
   DataLakeLambdaRole:
     Type: AWS::IAM::Role
-    Properties: 
-      AssumeRolePolicyDocument: 
+    Properties:
+      AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
         - Effect: Allow
           Principal:
             Service: [lambda.amazonaws.com]
           Action: ['sts:AssumeRole']
-      ManagedPolicyArns: 
+      ManagedPolicyArns:
       - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
       Policies:
       - PolicyName: data-lake-bucket-access
@@ -101,11 +104,18 @@ Resources:
             Action: ['s3:GetObject', 's3:PutObject', 's3:PutObjectTagging']
             Resource:
             - !Join ['', ['arn:aws:s3:::', !Ref DataLakeBucket, /*]]
+      - PolicyName: patient-matcher-api-invoke
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: 'lambda:InvokeFunction'
+            Resource: !Ref PatientMatcherApiArn
 
   # Put into S3 raw zone and store upload parameters as object metadata
   Hl7IngestToRawLambda:
     Type: AWS::Lambda::Function
-    Properties: 
+    Properties:
       FunctionName: !Sub ${AWS::StackName}_hl7_ingest_raw
       Code:
         S3Bucket: !Ref ArtifactBucket
@@ -124,10 +134,10 @@ Resources:
       LogGroupName: !Join ['/', ['/aws/lambda', !Ref Hl7IngestToRawLambda]]
       RetentionInDays: !Ref LogRetention
 
-  # Clean the ER7 message 
+  # Clean the ER7 message
   Hl7CleanEr7Lambda:
     Type: AWS::Lambda::Function
-    Properties: 
+    Properties:
       FunctionName: !Sub ${AWS::StackName}_hl7_clean_er7
       Code:
         S3Bucket: !Ref ArtifactBucket
@@ -149,7 +159,7 @@ Resources:
   # Convert from ER7 to JSON
   Hl7ParseEr7ToJsonLambda:
     Type: AWS::Lambda::Function
-    Properties: 
+    Properties:
       FunctionName: !Sub ${AWS::StackName}_hl7_er7_to_json
       Code:
         S3Bucket: !Ref ArtifactBucket
@@ -162,26 +172,27 @@ Resources:
         Variables:
           data_lake_bucket: !Ref DataLakeBucketName
           data_lake_prefix: 'staging/hl7v2/'
+          PATIENT_MATCHER_API_ARN: !Ref PatientMatcherApiArn
       Runtime: python3.8
       Timeout: 30
-      
+
   Hl7ParseEr7ToJsonLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Join ['/', ['/aws/lambda', !Ref Hl7ParseEr7ToJsonLambda]]
       RetentionInDays: !Ref LogRetention
-  
+
   #-------------------------------------------------------------- SNS topics for other services to attach to
   Hl7SuccessfulParseTopic:
     Type: AWS::SNS::Topic
-    Properties: 
+    Properties:
       TopicName: !Sub ${AWS::StackName}-Hl7SuccessfulParse
-      
+
   Hl7FailedParseTopic:
     Type: AWS::SNS::Topic
-    Properties: 
+    Properties:
       TopicName: !Sub ${AWS::StackName}-Hl7FailedParse
-      
+
   #-------------------------------------------------------------- Step Function
   StatesExecutionRole:
     Type: "AWS::IAM::Role"
@@ -215,7 +226,7 @@ Resources:
           Version: "2012-10-17"
           Statement:
           - Effect: Allow
-            Action: 
+            Action:
             - "logs:CreateLogDelivery"
             - "logs:GetLogDelivery"
             - "logs:UpdateLogDelivery"
@@ -277,7 +288,7 @@ Resources:
                     "Message.$": "$"
                   },
                   "End": true
-                },                
+                },
                 "Unparseable": {
                   "Type": "Task",
                   "Resource": "arn:aws:states:::sns:publish",
@@ -299,8 +310,8 @@ Resources:
             hl7SucceedParse: !Ref Hl7SuccessfulParseTopic
       StateMachineType: EXPRESS
       LoggingConfiguration:
-        Destinations: 
-        - CloudWatchLogsLogGroup: 
+        Destinations:
+        - CloudWatchLogsLogGroup:
             LogGroupArn: !GetAtt [RawToStagingStateMachineLogGroup, Arn]
         IncludeExecutionData: true
         Level: ALL
@@ -311,10 +322,10 @@ Resources:
     Properties:
       LogGroupName: !Sub '/aws/states/${AWS::StackName}-RawToStagingStateMachine'
       RetentionInDays: !Ref LogRetention
-      
+
   #-------------------------------------------------------------- Trigger our Step Function
   # Bucket to hold data lake CloudTrail logs
-  DataLakeCloudTrailBucket: 
+  DataLakeCloudTrailBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub ${DataLakeBucket}-ct-logs
@@ -326,42 +337,42 @@ Resources:
         BlockPublicAcls: true
         IgnorePublicAcls: true
         BlockPublicPolicy: true
-        RestrictPublicBuckets: true   
-  
+        RestrictPublicBuckets: true
+
   # Policy to allow CloudTrail service to access our CloudTrail logging bucket
-  DataLakeCloudTrailBucketPolicy: 
+  DataLakeCloudTrailBucketPolicy:
     Type: AWS::S3::BucketPolicy
-    Properties: 
-      Bucket: 
+    Properties:
+      Bucket:
         Ref: DataLakeCloudTrailBucket
-      PolicyDocument: 
+      PolicyDocument:
         Version: "2012-10-17"
-        Statement: 
+        Statement:
         - Sid: "AWSCloudTrailAclCheck"
           Effect: "Allow"
-          Principal: 
+          Principal:
             Service: "cloudtrail.amazonaws.com"
           Action: "s3:GetBucketAcl"
           Resource: !Sub arn:aws:s3:::${DataLakeCloudTrailBucket}
         - Sid: "AWSCloudTrailWrite"
           Effect: "Allow"
-          Principal: 
+          Principal:
             Service: "cloudtrail.amazonaws.com"
           Action: "s3:PutObject"
           Resource: !Sub arn:aws:s3:::${DataLakeCloudTrailBucket}/AWSLogs/${AWS::AccountId}/*
-          Condition: 
+          Condition:
             StringEquals:
               s3:x-amz-acl: "bucket-owner-full-control"
-    
+
   # Bucket trail is needed for API events in Amazon S3 to match the CloudWatch Events rule
   DataLakeRawTrail:
     DependsOn: # Put the trail as late as possible so it won't collect data during stack creation which would impede rollback
     - DataLakeCloudTrailBucketPolicy
     - DataLakeRawEvent
     Type: AWS::CloudTrail::Trail
-    Properties: 
+    Properties:
       EventSelectors:
-      - DataResources: 
+      - DataResources:
         - Type: 'AWS::S3::Object'
           Values:
           - !Sub arn:aws:s3:::${DataLakeBucket}/raw/ # We will use the same trail for all data types and choose in the step function
@@ -392,7 +403,7 @@ Resources:
             Action: ["states:StartExecution"]
             Resource: !Ref RawToStagingStateMachine
 
-  # CloudWatch rule to trigger 
+  # CloudWatch rule to trigger
   DataLakeRawEvent:
     Type: AWS::Events::Rule
     Properties:
@@ -405,7 +416,7 @@ Resources:
           eventName: [PutObject]
           requestParameters:
             bucketName: [!Ref DataLakeBucket]
-      Targets: 
+      Targets:
       - Arn: !Ref RawToStagingStateMachine
         Id: !Sub ${DataLakeBucket}-cw-event
         RoleArn: !GetAtt DataLakeRawEventRole.Arn
@@ -420,29 +431,29 @@ Resources:
 
   DefaultStage:
     Type: AWS::ApiGatewayV2::Stage
-    Properties: 
+    Properties:
       ApiId: !Ref HttpAPI
       AutoDeploy: true
       Description: Default stage
       StageName: $default
-  
+
   Hl7IngestToRawIntegration:
     Type: AWS::ApiGatewayV2::Integration
     DependsOn: [Hl7IngestToRawLambda]
-    Properties: 
+    Properties:
       ApiId: !Ref HttpAPI
       IntegrationType: AWS_PROXY
       IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Hl7IngestToRawLambda.Arn}/invocations
-      PayloadFormatVersion: 2.0
+      PayloadFormatVersion: "2.0"
 
   MyAuthorizor:
     Type: AWS::ApiGatewayV2::Authorizer
-    Properties: 
+    Properties:
       Name: !Sub ${AWS::StackName}-Authorizer
       ApiId: !Ref HttpAPI
       AuthorizerType: JWT
       IdentitySource: [$request.header.Authorization]
-      JwtConfiguration: 
+      JwtConfiguration:
         Audience: [!Ref UserPoolClient]
         Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
 
