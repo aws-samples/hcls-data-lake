@@ -24,10 +24,11 @@ def lambda_handler(event, context):
   logger.info("Decoding from Base64")
   msg_raw = decode_from_base64 (msg_b64, encoding)
   
-  key = "raw/hl7v2/{}.txt".format(str(uuid.uuid4()))
+  msg_uuid = str(uuid.uuid4())
+  key = "raw/hl7v2/{}.txt".format(msg_uuid)
   
+  logger.debug("Extracting the metadata")
   metadata = {}
-
   try: 
     metadata['seg-term'] = json.dumps(body['seg-term']) # Amazon S3 stores user-defined metadata keys in lowercase
   except Exception as e:
@@ -47,5 +48,8 @@ def lambda_handler(event, context):
   
   return {
     'statusCode': 200,
-    'body': json.dumps("Message added to raw zone")
+    "body": json.dumps({
+      "status": "Message added to raw zone",
+      "msg_uuid": msg_uuid
+    })
   }
