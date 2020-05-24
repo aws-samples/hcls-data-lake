@@ -22,6 +22,10 @@ Parameters:
     Description: Key for our HL7 cleaning Lambda function
     Type: AWS::SSM::Parameter::Value<String>
     Default: /healthcare-data-lake/hl7v2-cleaning-Lambda
+  Hl7RetrieveMsgFuncKey: 
+    Description: Key for our HL7 retrieve message Lambda function
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /healthcare-data-lake/hl7v2-retrieving-Lambda    
   DataLakeBucketName:
     Description: Bucket for ingesting and processing healthcare data
     Type: String
@@ -169,6 +173,28 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Join ['/', ['/aws/lambda', !Ref Hl7ParseEr7ToJsonLambda]]
+      RetentionInDays: !Ref LogRetention
+  
+    # Convert from ER7 to JSON
+  Hl7RetrieveMsgLambda:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Sub ${AWS::StackName}_hl7_retrieve_msg
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref Hl7RetrieveMsgFuncKey
+      Description: HL7 message retriever
+      Handler: hl7_retrieve_msg.lambda_handler
+      Role: !GetAtt DataLakeLambdaRole.Arn
+      Environment:
+        Variables:
+          data_lake_bucket: !Ref DataLakeBucketName
+      Runtime: python3.8
+      
+  Hl7ParseEr7ToJsonLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref Hl7RetrieveMsgFuncKey]]
       RetentionInDays: !Ref LogRetention
   
   #-------------------------------------------------------------- SNS topics for other services to attach to
@@ -425,15 +451,6 @@ Resources:
       AutoDeploy: true
       Description: Default stage
       StageName: $default
-  
-  Hl7IngestToRawIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    DependsOn: [Hl7IngestToRawLambda]
-    Properties: 
-      ApiId: !Ref HttpAPI
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Hl7IngestToRawLambda.Arn}/invocations
-      PayloadFormatVersion: 2.0
 
   MyAuthorizor:
     Type: AWS::ApiGatewayV2::Authorizer
@@ -445,6 +462,15 @@ Resources:
       JwtConfiguration: 
         Audience: [!Ref UserPoolClient]
         Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+  
+  Hl7IngestToRawIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    DependsOn: [Hl7IngestToRawLambda]
+    Properties: 
+      ApiId: !Ref HttpAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Hl7IngestToRawLambda.Arn}/invocations
+      PayloadFormatVersion: 2.0
 
   Hl7Er7PostRoute:
     Type: AWS::ApiGatewayV2::Route
@@ -462,5 +488,33 @@ Resources:
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !Ref Hl7IngestToRawLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpAPI}/*
+
+  Hl7RetrieveMsgIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    DependsOn: [Hl7RetrieveMsgLambda]
+    Properties: 
+      ApiId: !Ref HttpAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Hl7RetrieveMsgLambda.Arn}/invocations
+      PayloadFormatVersion: 2.0
+
+  Hl7RetrieveMsgRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpAPI
+      RouteKey: "GET /hl7v2/format/{format}/msg_uuid/{msg_uuid}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref MyAuthorizor
+      Target: !Join [/, [integrations, !Ref Hl7RetrieveMsgIntegration]]
+
+  # Permission for the HTTP gateway to invoke our function
+  HttpHl7RetrieveMsgLambdaPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: [HttpAPI]
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Hl7RetrieveMsgLambda
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpAPI}/*

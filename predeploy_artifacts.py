@@ -12,6 +12,7 @@ hl7apyUrl="https://files.pythonhosted.org/packages/6d/97/9903a942be1d3d7a193d643
 parsingLambda="lambdas/hl7_parse_er7_to_json.py"
 hl7LandingLambda="lambdas/hl7_ingest_to_raw.py"
 hl7CleaningLambda="lambdas/hl7_clean_er7.py"
+hl7RetrievingLambda="lambdas/hl7_retrieve_msg.py"
 
 ssm = boto3.client('ssm')
 
@@ -37,6 +38,8 @@ def main():
   print("Zip and upload our parsing function "+parsingLambda)
   upload_lambda_function(parsingLambda, bucketName, "hl7v2-parsing-Lambda")
 
+  print("Zip and upload our parsing function "+hl7RetrievingLambda)
+  upload_lambda_function(hl7RetrievingLambda, bucketName, "hl7v2-retrieving-Lambda")
   
   print("Done")
 
