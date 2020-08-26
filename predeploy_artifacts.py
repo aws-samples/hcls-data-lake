@@ -17,7 +17,7 @@ ssm = boto3.client('ssm')
 def main():
   # Set working directory to file location
   os.chdir(os.path.dirname(os.path.abspath(__file__)))
-  
+
   print ("Getting our bucket, creating if it does not exist")
   bucketName = get_bucket()
   print ("Using bucket "+bucketName)
@@ -27,27 +27,27 @@ def main():
 
   print("Zip and upload our parsing function "+parsingLambda)
   upload_lambda_function(bucketName)
-  
+
   print("Done")
 
 def get_bucket():
   artifactBucketParam = "/healthcare-data-lake/artifact-bucket"
-  
+
   # Get the bucket name from parameter, set otherwise
   try:
     artifactBucketName = ssm.get_parameter(Name=artifactBucketParam)["Parameter"]["Value"]
   except ClientError: # Create this parameter and bucket if it does not exist
     artifactBucketName = "healthcare-data-lake-artifacts-" + str(uuid.uuid4())[0:12]
-    
+
   # Create bucket if it does not exist
   create_bucket(artifactBucketName)
   ssm.put_parameter(
-    Name=artifactBucketParam, 
-    Description='Name of the S3 bucket holding .zip artifacts for the healthcare data lake', 
+    Name=artifactBucketParam,
+    Description='Name of the S3 bucket holding .zip artifacts for the healthcare data lake',
     Value=artifactBucketName,
     Type="String",
     Overwrite=True)
-  
+
   return artifactBucketName
 
 def create_bucket(bucket_name):
@@ -65,22 +65,22 @@ def create_bucket(bucket_name):
 
 def upload_lambda_library(bucket):
   wd = os.getcwd()
-  
+
   # Create temporary directory
   td = tempfile.mkdtemp()
   os.chdir(td)
-  
+
   # Download HL7apy file
   print ("Downloading file: "+hl7apyUrl)
   file_name = hl7apyUrl[hl7apyUrl.rindex('/')+1:]
   urllib.request.urlretrieve(hl7apyUrl, file_name)
-  
+
   print ("Processing to make Lambda Layer friendly")
-  # Untar 
+  # Untar
   tar = tarfile.open(file_name)
   tar.extractall()
-  tar.close()  
-  
+  tar.close()
+
   # Rename top folder to work as Lambda Layer
   lib_folder = file_name.replace(".tar.gz","")
   os.rename(lib_folder, "python") # Top folder for Lambda Layer expects 'python'
@@ -89,26 +89,26 @@ def upload_lambda_library(bucket):
   key = lib_folder+".zip"
 
   # Zip up folder
-  zipfolder(key, 'python') 
+  zipfolder(key, 'python')
 
   print("Uploading "+key)
   upload_file(key, bucket, None)
 
   # Go back to initial working directory
   os.chdir(wd)
-  
+
   # Delete the temporary directory and contents
   shutil.rmtree(td)
-  
+
   # Put the parameter
   ssm.put_parameter(
-    Name="/healthcare-data-lake/hl7v2-parsing-Lambda-Layer", 
-    Description='The S3 key for the Lambda Layer being used to support HL7v2 parsing', 
+    Name="/healthcare-data-lake/hl7v2-parsing-Lambda-Layer",
+    Description='The S3 key for the Lambda Layer being used to support HL7v2 parsing',
     Value=key,
     Type="String",
     Overwrite=True)
 
-def zipfolder(foldername, target_dir):      
+def zipfolder(foldername, target_dir):
   zipobj = zipfile.ZipFile(foldername, 'w', zipfile.ZIP_DEFLATED)
   rootlen = len(target_dir) + 1
   for base, dirs, files in os.walk(target_dir):
@@ -118,10 +118,10 @@ def zipfolder(foldername, target_dir):
 
 def upload_file(file_name, bucket, object_name=None, wait=True):
   s3_client = boto3.client('s3')
-  
+
   # If S3 object_name was not specified, use file_name
   if object_name is None: object_name = file_name
-    
+
   # Upload the file
   try:
     s3_client.upload_file(file_name, bucket, object_name)
@@ -138,17 +138,19 @@ def upload_file(file_name, bucket, object_name=None, wait=True):
 
 def upload_lambda_function(bucketName):
   lambdaKey = parsingLambda.replace(".py",".zip")
-  zipfile.ZipFile(lambdaKey, mode='w').write(parsingLambda)
+  with zipfile.ZipFile(lambdaKey, mode='w') as archive:
+    archive.write(parsingLambda)
+    archive.write('data_access_layer.py')
   upload_file(lambdaKey, bucketName)
-  
+
   # Put in the parameter
   ssm.put_parameter(
-    Name="/healthcare-data-lake/hl7v2-parsing-Lambda", 
-    Description='The S3 key for the the HL7v2 parsing Lambda function', 
-    Value=lambdaKey, 
+    Name="/healthcare-data-lake/hl7v2-parsing-Lambda",
+    Description='The S3 key for the the HL7v2 parsing Lambda function',
+    Value=lambdaKey,
     Type="String",
     Overwrite=True)
-  
+
   # Delete the temporary zip file
   os.remove(lambdaKey)
 
