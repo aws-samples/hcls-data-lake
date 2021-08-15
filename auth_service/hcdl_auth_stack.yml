@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Healthcare data lake - authorization'
+
+Parameters:
+  CoreStack:
+    Description: The foundational stack which has our dependant objects
+    Type: String
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UserPoolName: !Sub ${AWS::StackName}-UserPool
+      UsernameAttributes: [email]
+      Schema: 
+      - AttributeDataType: String
+        Mutable: true
+        Name: read
+        Required: false # Does not support required custom attributes
+      - AttributeDataType: String
+        Mutable: true
+        Name: write
+        Required: false
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub ${AWS::StackName}-UserPoolClient
+      GenerateSecret: false
+      UserPoolId: !Ref UserPool
+      ExplicitAuthFlows:
+      - ALLOW_USER_PASSWORD_AUTH
+      - ALLOW_ADMIN_USER_PASSWORD_AUTH
+      - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub ${AWS::StackName}_IdentityPool # Does not like dashes in the name
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders: 
+        - ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+  
+  AuthorizedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # The trust relationship which allows this role to be assumed based on Cognito user attributes
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: 
+              Federated: cognito-identity.amazonaws.com
+            Action: ['sts:AssumeRoleWithWebIdentity','sts:TagSession']
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+              ForAnyValue:StringLike:
+                "cognito-identity.amazonaws.com:amr": authenticated
+                
+      # What this role can actually do
+      Policies:
+        - PolicyName: !Sub ${AWS::StackName}-AuthorizedPolicy
+          PolicyDocument: 
+            Version: 2012-10-17
+            Statement: 
+              - Effect: Allow
+                Action: ["mobileanalytics:PutEvents","cognito-sync:*","cognito-identity:*"]
+                Resource: "*"
+                
+                # Get is restricted to the specific bucket and must have a tag matching the custom 'read' attribute for the user
+              - Effect: "Allow"
+                Action: ['s3:GetObject']
+                Resource:
+                  Fn::Join: ["", ["arn:aws:s3:::", Fn::ImportValue: !Sub "${CoreStack}-Bucket", "/*"]]
+                Condition: 
+                  StringEquals: 
+                    "s3:ExistingObjectTag/source": "${aws:PrincipalTag/read}"
+                    
+                # Put is restricted to the specific bucket and must have a tag matching the custom 'write' attribute for the user
+              - Effect: "Allow"
+                Action: ['s3:PutObject','s3:PutObjectTagging']
+                Resource:
+                  Fn::Join: ["", ["arn:aws:s3:::", Fn::ImportValue: !Sub "${CoreStack}-Bucket", "/*"]]
+                Condition: 
+                  StringEquals:
+                    "s3:RequestObjectTag/source": "${aws:PrincipalTag/write}"
+                
+  IdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        authenticated: !GetAtt AuthorizedRole.Arn
+
+  # Adding as an authorizer for data lake API Gateway
+  Authorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties: 
+      Name: !Sub ${AWS::StackName}-Authorizer
+      ApiId:
+        Fn::ImportValue: !Sub "${CoreStack}-HttpApi"
+      AuthorizerType: JWT
+      IdentitySource: [$request.header.Authorization]
+      JwtConfiguration: 
+        Audience: [!Ref UserPoolClient]
+        Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+
+Outputs:
+  CognitoEndpoint:
+    Value: !Join ['', ["cognito-idp.",!Ref AWS::Region,".amazonaws.com"]]
+  
+  UserPool:
+    Value: !Ref UserPool
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName", UserPool]]
+  
+  IdentityPool:
+    Value: !Ref IdentityPool
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName", IdentityPool]]
+  
+  Authorizer:
+    Value: !Ref Authorizer
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName", Authorizer]]
+
+#   GatewayUrl:
+#     Value: !Join ['', ["https://",!Ref HttpAPI,".execute-api.",!Ref AWS::Region,".amazonaws.com/"]]

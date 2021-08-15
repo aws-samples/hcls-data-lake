@@ -1,0 +1,127 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Healthcare data lake - ER7 ingestion'
+
+Parameters:
+  CoreStack:
+    Description: The foundational stack which has our dependant objects
+    Type: String
+  AuthStack:
+    Description: The authentication and authorization stack
+    Type: String
+  FunctionKey:
+    Description: The key for our uploaded lambda file
+    Type: String
+
+Resources:
+  # Note that this role does not provide access to S3 as we use the Cognito user JWT credentials for that
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      ManagedPolicyArns: 
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
+      Policies:
+      - PolicyName: dynamodb
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['dynamodb:*']
+            Resource:
+            - !Sub arn:aws:dynamodb:*:*:table/${Table}
+      - PolicyName: sns
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['sns:publish']
+            Resource:
+            - Fn::ImportValue: !Sub "${CoreStack}-Topic"
+            
+  # Ingest the ER7 message 
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Sub ${AWS::StackName}_function
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub "${CoreStack}-ArtifactBucket"
+        S3Key: !Ref FunctionKey
+      Description: Ingests ER7 messages
+      Handler: ingest_er7_lambda.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          bucket_name: 
+            Fn::ImportValue: !Sub "${CoreStack}-Bucket"
+          topic: 
+            Fn::ImportValue: !Sub "${CoreStack}-Topic"
+          cognito_endpoint: !Join ['', ["cognito-idp.",!Ref AWS::Region,".amazonaws.com"]]
+          user_pool_id: 
+            Fn::ImportValue: !Sub "${AuthStack}-UserPool"
+          identity_pool_id: 
+            Fn::ImportValue: !Sub "${AuthStack}-IdentityPool"
+          table: !Ref Table
+      Runtime: python3.8
+
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref LambdaFunction]]
+      RetentionInDays: 1 # Keep logs for a short duration
+
+  # Permission for the HTTP gateway to invoke our function
+  GatewayLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LambdaFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Join: ['', [Fn::ImportValue: !Sub "${CoreStack}-HttpApiArn","/*"]]
+
+  # Integrate function to API Gateway
+  GatewayIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    DependsOn: [LambdaFunction]
+    Properties: 
+      ApiId:
+        Fn::ImportValue: !Sub "${CoreStack}-HttpApi"
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations
+      PayloadFormatVersion: 2.0
+  
+  # POST route (discards exact duplicates)
+  GatewayRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Fn::ImportValue: !Sub "${CoreStack}-HttpApi"
+      RouteKey: "POST /er7"
+      AuthorizationType: JWT
+      AuthorizerId: 
+        Fn::ImportValue: !Sub "${AuthStack}-Authorizer"
+      Target: !Join [/, [integrations, !Ref GatewayIntegration]]
+      
+  # DynamoDB table used to track message uniqueness
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+      - AttributeName: "source"
+        AttributeType: "S"
+      - AttributeName: "message_id"
+        AttributeType: "S"
+      KeySchema: 
+      - AttributeName: "source"
+        KeyType: "HASH"
+      - AttributeName: "message_id"
+        KeyType: "RANGE"
+      TableName: !Sub ${AWS::StackName}-INGESTED_MESSAGE
+      BillingMode: PAY_PER_REQUEST

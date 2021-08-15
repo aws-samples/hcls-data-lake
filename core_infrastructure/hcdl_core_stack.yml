@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Healthcare data lake - core resources'
+
+Parameters:
+  BucketName:
+    Description: Bucket for ingesting and processing healthcare data
+    Type: String
+  ArtifactBucketName:
+    Description: Bucket for holding software artifacts
+    Type: String
+  LogRetention:
+    Description: Days to to keep logs
+    Type: Number
+    Default: 1
+
+Resources:
+  #-------------------------------------------------------------- Data Lake bucket
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      BucketEncryption: # Encryption at rest
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration: # Block all public access
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ArtifactBucketName
+      BucketEncryption: # Encryption at rest
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration: # Block all public access
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  #-------------------------------------------------------------- API Gateway
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${AWS::StackName}-APIGateway
+      ProtocolType: HTTP
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties: 
+      ApiId: !Ref HttpApi
+      AutoDeploy: true
+      Description: Default stage
+      StageName: $default
+  
+  #-------------------------------------------------------------- Communication topic (use attributes to determine filtering)
+  # Encryption need to be added before production
+  Topic:
+    Type: AWS::SNS::Topic
+    Properties: 
+      TopicName: !Sub ${AWS::StackName}-Topic
+      
+Outputs:
+  Bucket:
+    Value: !Ref Bucket
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName", Bucket]]
+  
+  ArtifactBucket:
+    Value: !Ref ArtifactBucket
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName", ArtifactBucket]]
+  
+  HttpApi:
+    Value: !Ref HttpApi
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName", HttpApi]]
+  
+  HttpApiArn:
+    Value: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName", HttpApiArn]]
+      
+  Topic:
+    Value: !Ref Topic
+    Export:
+      Name: !Sub ${AWS::StackName}-Topic
