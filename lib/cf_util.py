@@ -15,8 +15,7 @@ def create_or_update_stack(stack_name, template_file_path, params, capabilities=
         StackName=stack_name,
         TemplateBody=template_data,
         Parameters=parameter_map,
-        Capabilities=capabilities,
-        OnFailure='ROLLBACK'
+        Capabilities=capabilities
       )
       action = "update"
       waiter = cf.get_waiter('stack_update_complete')

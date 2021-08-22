@@ -15,13 +15,13 @@ Resources:
       UserPoolName: !Sub ${AWS::StackName}-UserPool
       UsernameAttributes: [email]
       Schema: 
-      - AttributeDataType: String
+      - Name: read
+        AttributeDataType: String
         Mutable: true
-        Name: read
         Required: false # Does not support required custom attributes
-      - AttributeDataType: String
+      - Name: write
+        AttributeDataType: String
         Mutable: true
-        Name: write
         Required: false
 
   UserPoolClient:
