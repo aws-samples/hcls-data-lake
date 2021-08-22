@@ -13,13 +13,13 @@ cognito_identity = boto3.client('cognito-identity')
 sf = boto3.client('stepfunctions')
 
 def lambda_handler(event, context):
-  # Verify user has write permission
+  idToken = event['headers']['authorization']
   claims = event['requestContext']['authorizer']['jwt']['claims']
   source = claims.get('custom:write','')
   
   if len(source) == 0:
-    logger.warn("Unathorized write attempt rejected")
-    return __get_response("", 403, "Insufficient privilages to write")
+    logger.warn("Unauthorized write attempt rejected")
+    return __get_response("", 403, "Insufficient privileges to write")
     
   logger.debug("Source: "+source) 
 
@@ -57,8 +57,7 @@ def lambda_handler(event, context):
     logger.warn(json.loads(response['cause'])['errorMessage'])
 
   # Store the message (after parsing attempt since we want that status on the tags)
-  idToken = event['headers']['authorization']
-  key="source={}/protocol=hl7v2/format=er7/zone=ingest/{}.txt".format(source, msg_hash)
+  key = "source={}/protocol=hl7v2/format=er7/zone=ingest/{}.txt".format(source, msg_hash)
   tags = 'source={}&state={}'.format(source, state)
   __store_message(idToken, msg, key, tags, msg_hash, source)
   logger.info("Message written to bucket '{}' with key '{}'".format(os.environ['bucket_name'], key))
@@ -138,7 +137,7 @@ def __store_message(idToken, msg, key, tags, msg_hash, source):
   
   client = __get_client('s3', credentials) # Client with user credentials
   
-  logger.debug("Putting in our bucket")
+  logger.debug("Putting in the bucket")
   client.put_object(
     Bucket=os.environ['bucket_name'],
     Key=key,

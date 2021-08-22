@@ -41,10 +41,15 @@ def main():
     cf_util.delete_stack(auth_stack_name)
 
     print("Delete core")
+    
     # Delete all objects from our buckets
     s3 = boto3.resource('s3')
-    s3.Bucket(cf_util.get_physical_resource_id(core_stack_name, "Bucket")).object_versions.delete()
-    s3.Bucket(cf_util.get_physical_resource_id(core_stack_name, "ArtifactBucket")).object_versions.delete()
+    try:
+      s3.Bucket(cf_util.get_physical_resource_id(core_stack_name, "Bucket")).object_versions.delete()
+      s3.Bucket(cf_util.get_physical_resource_id(core_stack_name, "ArtifactBucket")).object_versions.delete()
+    except ClientError as e:
+      if "does not exist" in e.response['Error']['Message']: None # Stack already isn't there
+      else: raise
     
     cf_util.delete_stack(core_stack_name)
   else: 

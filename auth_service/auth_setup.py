@@ -25,12 +25,8 @@ def __set_attribute_map(stack_name):
   user_pool_id = cf_util.get_physical_resource_id(stack_name, "UserPool")
 
   # Cognito endpoint isn't a Physical ID in the stack, so we get it from the Outputs
-  cf = boto3.client('cloudformation')
-  cognito_endpoint = ""
-  outputs = cf.describe_stacks(StackName=stack_name)['Stacks'][0]['Outputs']
-  for o in outputs:
-    if o['OutputKey'] == 'CognitoEndpoint': cognito_endpoint = o['OutputValue'] 
-  
+  cognito_endpoint = cf_util.get_output_value(stack_name, 'CognitoEndpoint')
+
   cid = boto3.client('cognito-identity')
   response = cid.set_principal_tag_attribute_map(
     IdentityPoolId=identity_pool_id,

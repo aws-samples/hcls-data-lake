@@ -128,6 +128,3 @@ Outputs:
     Value: !Ref Authorizer
     Export:
       Name: !Join ["-", [!Ref "AWS::StackName", Authorizer]]
-
-#   GatewayUrl:
-#     Value: !Join ['', ["https://",!Ref HttpAPI,".execute-api.",!Ref AWS::Region,".amazonaws.com/"]]
