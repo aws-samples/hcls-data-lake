@@ -6,24 +6,22 @@ import random
 # Lets us find our lib folder for import
 sys.path.append(".")
 from auth_service import auth_setup
+from lib import cognito_util, cf_util
 
-def get_user_password_auth(username, password, appClientId):
-  # Get the JSON Web Token (JWT)
-  client = boto3.client('cognito-idp')
+cognitoIdp =boto3.client('cognito-idp')
+
+def __create_user_if_not_exists(stack_name, username, password, r_institution, w_institution):
+  # Get the user pool ID and Client ID
+  userPoolId = cf_util.get_physical_resource_id(stack_name, "UserPool")
+  appClientId = cf_util.get_physical_resource_id(stack_name, "UserPoolClient")
   
-  response = client.initiate_auth(
-    AuthFlow='USER_PASSWORD_AUTH',
-    AuthParameters={
-      'USERNAME': username,
-      'PASSWORD': password
-    },
-    ClientId=appClientId
-  )
-  return response["AuthenticationResult"]["IdToken"]
-
-def create_user_if_not_exists(auth_stack_name, username, password, r_institution, w_institution):
+  userAttributes=[
+    {'Name': 'custom:read', 'Value': r_institution},
+    {'Name': 'custom:write', 'Value': w_institution}
+  ]
+  
   try:
-    auth_setup.create_and_authenticate_user(auth_stack_name, username, password, r_institution, w_institution)
+    cognito_util.create_and_authenticate_user(userPoolId, appClientId, username, password, userAttributes)
   except ClientError as e:
     print(e)
 
@@ -40,11 +38,7 @@ def sendRequest(idToken, apiGatewayId, msg, encoding, segTerm=None):
   }
   route="er7"
   url="https://"+apiGatewayId+".execute-api."+region_name+".amazonaws.com/"+route
-
-  if segTerm is not None:
-    data = json.dumps({'msg': encodeToBase64(msg, encoding), "encoding": encoding, "seg-term": ["\r\n", "\n"]})
-  else:
-    data = json.dumps({'msg': encodeToBase64(msg, encoding), "encoding": encoding})
+  data = json.dumps({'msg': encodeToBase64(msg, encoding), "encoding": encoding})
 
   resp = requests.post(url, headers=headers, data=data, verify=True)
   
@@ -61,12 +55,10 @@ def main():
   core_stack_name = stack_name +"-core"
   auth_stack_name = stack_name +"-auth"
   ingest_er7_stack_name = stack_name +"-ingest-er7"
-  region_name = boto3.session.Session().region_name
 
   # Pull data from our stacks
-  cf = boto3.client('cloudformation')
-  apiGatewayId = cf.describe_stack_resource(StackName=core_stack_name, LogicalResourceId='HttpApi')['StackResourceDetail']['PhysicalResourceId']
-  app_client_id = cf.describe_stack_resource(StackName=auth_stack_name, LogicalResourceId='UserPoolClient')['StackResourceDetail']['PhysicalResourceId']
+  apiGatewayId = cf_util.get_physical_resource_id(core_stack_name, "HttpApi")
+  app_client_id = cf_util.get_physical_resource_id(auth_stack_name, "UserPoolClient")
 
   users = ["admin@example.com","reader@example.com","writer@example.com"]
   password = "3C{KWLrXieQ#"
@@ -74,9 +66,9 @@ def main():
   
   # Create our user
   print("Create users")
-  create_user_if_not_exists(auth_stack_name, users[0], password, institution, institution)
-  create_user_if_not_exists(auth_stack_name, users[1], password, institution, "")
-  create_user_if_not_exists(auth_stack_name, users[2], password, "", institution)
+  __create_user_if_not_exists(auth_stack_name, users[0], password, institution, institution)
+  __create_user_if_not_exists(auth_stack_name, users[1], password, institution, "")
+  __create_user_if_not_exists(auth_stack_name, users[2], password, "", institution)
  
   # Create a simple HL7v2 message with a random element so we can keep uploading
   rand_num = str(random.randint(0,99999))
@@ -84,12 +76,10 @@ def main():
 EVN|A01|201611111111||
 PID|1|100001^^^1^MRN1|900001||DOE^JOHN^^^^||19601111|M||WH|111 THAT PL^^HERE^WA^98020^USA||(206)555-5309|||M|NON|999999999|
 NK1|1|DOE^JANE^|WIFE||(206)555-5555||||NK^NEXT OF KIN
-PV1|1|O|1001^2002^01||||123456^DOCTOR^BOB^T^^DR|||||||ADM|A0|""".format(rand_num), "I'm just rubbish {}".format(rand_num)}
-  
+PV1|1|O|1001^2002^01||||123456^DOCTOR^BOB^T^^DR|||||||ADM|A0|""".format(rand_num), "I'm just a random number: {}".format(rand_num)}
   
   for user in users:
-    # Get the ID token
-    idToken = get_user_password_auth(user, password, app_client_id)
+    idToken = cognito_util.get_id_token(user, password, app_client_id)
     
     for msg in msgs:
       print ("Send message")

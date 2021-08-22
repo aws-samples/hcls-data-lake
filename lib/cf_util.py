@@ -3,6 +3,7 @@ from botocore.exceptions import ClientError
 
 cf = boto3.client('cloudformation')
 USE_PREVIOUS_VALUE = "4978#@#$@!)*&@#/$3423" # Random string to avoid collision; not a complex enough case to warrant Enums
+cache_map = {} # Used to cache results
 
 def create_or_update_stack(stack_name, template_file_path, params, capabilities=[]):
   template_data = __parse_template(template_file_path)
@@ -49,8 +50,16 @@ def stack_exists(stack_name):
   return False
   
 def get_physical_resource_id(stack_name, logical_resource_id):
-  return cf.describe_stack_resource(StackName=stack_name, LogicalResourceId=logical_resource_id)['StackResourceDetail']['PhysicalResourceId']
+  key = stack_name +":" +logical_resource_id
   
+  if not key in cache_map:
+    physical_resource_id = cf.describe_stack_resource(
+      StackName=stack_name, LogicalResourceId=logical_resource_id
+      )['StackResourceDetail']['PhysicalResourceId']
+    cache_map[key] = physical_resource_id
+      
+  return cache_map[key]
+
 def __parse_template(template):
   with open(template) as template_fileobj: template_data = template_fileobj.read()
   cf.validate_template(TemplateBody=template_data)
