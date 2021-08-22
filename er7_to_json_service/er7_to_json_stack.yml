@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Parse ER7 to JSON'
+
+Parameters:
+  SourceBucket:
+    Description: Bucket where code artifacts are kept
+    Type: String
+  Hl7ParsingLibKey:
+    Description: Key for our HL7 parsing library
+    Type: String
+  CleanLambdaKey:
+    Type: String
+  CleanLambdaVersion:
+    Type: String
+  CleanHandler:
+    Type: String
+  ParseLambdaKey:
+    Type: String
+  ParseLambdaVersion:
+    Type: String
+  ParseHandler:
+    Type: String    
+
+Resources:
+  #-------------------------------------------------------------- Lambda Layer
+  Hl7apyLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties: 
+      CompatibleRuntimes: [python2.7, python3.6, python3.7, python3.8, python3.9]
+      Content: 
+        S3Bucket: !Ref SourceBucket
+        S3Key: !Ref Hl7ParsingLibKey
+      LayerName: hl7apy
+      Description: "HL7apy parser library"
+      LicenseInfo: MIT
+
+  #-------------------------------------------------------------- Cleaning Lambda
+  CleanLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Sub ${AWS::StackName}_clean
+      Description: Used to clean our ER7 message
+      Code:
+        S3Bucket: !Ref SourceBucket
+        S3Key: !Ref CleanLambdaKey
+        S3ObjectVersion: !Ref CleanLambdaVersion
+      Handler: !Ref CleanHandler
+      Role: !GetAtt CleanLambdaRole.Arn
+      Runtime: python3.9
+
+  CleanLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref CleanLambdaFunction]]
+      RetentionInDays: 1 # Keep logs for a short duration
+
+  CleanLambdaRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      ManagedPolicyArns: 
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
+
+  #-------------------------------------------------------------- Cleaning Lambda
+  ParseLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Sub ${AWS::StackName}_parse
+      Description: Parse an ER7 message to JSON
+      Layers: [!Ref Hl7apyLayer]
+      Code:
+        S3Bucket: !Ref SourceBucket
+        S3Key: !Ref ParseLambdaKey
+        S3ObjectVersion: !Ref ParseLambdaVersion
+      Handler: !Ref ParseHandler
+      Role: !GetAtt ParseLambdaRole.Arn 
+      Runtime: python3.9
+
+  ParseLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref ParseLambdaFunction]]
+      RetentionInDays: 1 # Keep logs for a short duration
+
+  ParseLambdaRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      ManagedPolicyArns: 
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
+
+  #-------------------------------------------------------------- Step Function
+  StateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub ${AWS::StackName}_step_function
+      StateMachineType: EXPRESS
+      RoleArn: !GetAtt StateMachineRole.Arn
+      TracingConfiguration:
+        Enabled: true
+      Definition:
+        StartAt: CleanEr7
+        States:
+          CleanEr7:
+            Type: Task
+            Resource: !GetAtt CleanLambdaFunction.Arn
+            InputPath: $.Message # What to pass to the Lambda
+            ResultPath: $.er7 # Where to append Lambda results
+            Next: ParseEr7
+          ParseEr7:  
+            Type: Task
+            Resource: !GetAtt ParseLambdaFunction.Arn
+            InputPath: $.er7
+            ResultPath: $.json
+            End: true
+      LoggingConfiguration:
+        Destinations:
+        - CloudWatchLogsLogGroup:
+            LogGroupArn: !GetAtt StateMachineLogGroup.Arn
+        IncludeExecutionData: True
+        Level: ALL
+            
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Action: ['sts:AssumeRole']
+          Effect: Allow
+          Principal:
+            Service: [states.amazonaws.com]
+      ManagedPolicyArns: []
+      Policies:
+      - PolicyName: StateMachineRolePolicy
+        PolicyDocument:
+          Statement:
+          - Action: ['lambda:InvokeFunction', 'logs:*']
+            Resource: "*"
+            Effect: Allow
+
+  StateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/stepfunction', !Sub "${AWS::StackName}_step_function"]] # Cannot use !Ref as that would create a circular dependency
+      RetentionInDays: 14
+
+Outputs:
+  StateMachine:
+    Value: !Ref StateMachine
+    Export: 
+      Name: !Sub ${AWS::StackName}-StateMachine

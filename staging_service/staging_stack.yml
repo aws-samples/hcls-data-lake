@@ -1,0 +1,81 @@
+Parameters:
+  CoreStack:
+    Description: The foundational stack
+    Type: String
+  LambdaKey:
+    Type: String
+  LambdaVersion:
+    Type: String
+  Handler:
+    Type: String
+
+Resources:
+  #-------------------------------------------------------------- A temporary function
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Sub "${AWS::StackName}_staging"
+      Description: Temporary function to put JSON file into the data lake
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub "${CoreStack}-ArtifactBucket"
+        S3Key: !Ref LambdaKey
+        S3ObjectVersion: !Ref LambdaVersion
+      Handler: !Ref Handler
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: python3.9
+      Environment:
+        Variables:
+          bucket_name: 
+            Fn::ImportValue: !Sub "${CoreStack}-Bucket"
+      
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref LambdaFunction]]
+      RetentionInDays: 1 # Keep logs for a short duration
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      ManagedPolicyArns: 
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
+      Policies:
+      - PolicyName: s3
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['s3:PutObject', 's3:PutObjectTagging']
+            Resource:
+              Fn::Join: ["", ["arn:aws:s3:::", Fn::ImportValue: !Sub "${CoreStack}-Bucket", "/*"]]
+
+  # Permission for SNS topic to invoke this Lambda
+  LambdaResourcePolicy:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Principal: sns.amazonaws.com
+      Action: "lambda:InvokeFunction"
+      SourceArn:
+        Fn::ImportValue: !Sub "${CoreStack}-Topic"
+
+  # Subscription to SNS topic
+  Subscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn:
+        Fn::ImportValue: !Sub "${CoreStack}-Topic"
+      Endpoint: !GetAtt LambdaFunction.Arn
+      FilterPolicy:
+        protocol: [hl7v2]
+        format: [json]
+        state: [parsed]
+      Protocol: lambda

@@ -1,0 +1,79 @@
+Parameters:
+  SourceBucket:
+    Description: Bucket where code artifacts are kept
+    Type: String
+  Hl7ParsingLibKey:
+    Description: Key for our HL7 parsing library
+    Type: String
+  ProxyLambdaKey:
+    Type: String
+  ProxyLambdaVersion:
+    Type: String
+  ProxyHandler:
+    Type: String
+    
+  #-------------------------------------------------------------- Proxy Lambda
+  ProxyLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Sub ${AWS::StackName}_proxy
+      Description: Used to trigger our Step Function
+      Code:
+        S3Bucket: !Ref SourceBucket
+        S3Key: !Ref ProxyLambdaKey
+        S3ObjectVersion: !Ref ProxyLambdaVersion
+      Handler: !Ref ProxyHandler
+      Role: !GetAtt ProxyLambdaRole.Arn
+      Runtime: python3.9
+      Environment:
+        Variables:
+          step_function: !Ref StateMachine
+      
+  ProxyLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref ProxyLambdaFunction]]
+      RetentionInDays: 1 # Keep logs for a short duration
+
+  ProxyLambdaRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      ManagedPolicyArns: 
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
+      Policies:
+      - PolicyName: step_function
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['states:StartExecution']
+            Resource: !Ref StateMachine
+
+  # Permission for SNS topic to invoke this Lambda
+  ProxyLambdaResourcePolicy:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProxyLambdaFunction
+      Principal: sns.amazonaws.com
+      Action: "lambda:InvokeFunction"
+      SourceArn:
+        Fn::ImportValue: !Sub "${CoreStack}-Topic"
+
+  # Subscription to SNS topic
+  ProxySubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn:
+        Fn::ImportValue: !Sub "${CoreStack}-Topic"
+      Endpoint: !GetAtt ProxyLambdaFunction.Arn
+      FilterPolicy:
+        format: [er7]
+        state: [new]
+      Protocol: lambda

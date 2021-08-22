@@ -8,10 +8,6 @@ Parameters:
   ArtifactBucketName:
     Description: Bucket for holding software artifacts
     Type: String
-  LogRetention:
-    Description: Days to to keep logs
-    Type: Number
-    Default: 1
 
 Resources:
   #-------------------------------------------------------------- Data Lake bucket
@@ -37,6 +33,8 @@ Resources:
         ServerSideEncryptionConfiguration:
         - ServerSideEncryptionByDefault:
             SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
       PublicAccessBlockConfiguration: # Block all public access
         BlockPublicAcls: true
         IgnorePublicAcls: true
@@ -59,7 +57,7 @@ Resources:
       StageName: $default
   
   #-------------------------------------------------------------- Communication topic (use attributes to determine filtering)
-  # Encryption need to be added before production
+  # Encryption needs to be added before production
   Topic:
     Type: AWS::SNS::Topic
     Properties: 
@@ -69,22 +67,22 @@ Outputs:
   Bucket:
     Value: !Ref Bucket
     Export:
-      Name: !Join ["-", [!Ref "AWS::StackName", Bucket]]
+      Name: !Sub ${AWS::StackName}-Bucket
   
   ArtifactBucket:
     Value: !Ref ArtifactBucket
     Export:
-      Name: !Join ["-", [!Ref "AWS::StackName", ArtifactBucket]]
+      Name: !Sub ${AWS::StackName}-ArtifactBucket
   
   HttpApi:
     Value: !Ref HttpApi
     Export:
-      Name: !Join ["-", [!Ref "AWS::StackName", HttpApi]]
+      Name: !Sub ${AWS::StackName}-HttpApi
   
   HttpApiArn:
     Value: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}
     Export:
-      Name: !Join ["-", [!Ref "AWS::StackName", HttpApiArn]]
+      Name: !Sub ${AWS::StackName}-HttpApiArn
       
   Topic:
     Value: !Ref Topic

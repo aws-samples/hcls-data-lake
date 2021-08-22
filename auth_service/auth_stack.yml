@@ -3,7 +3,7 @@ Description: 'Healthcare data lake - authorization'
 
 Parameters:
   CoreStack:
-    Description: The foundational stack which has our dependant objects
+    Description: The foundational stack
     Type: String
 
 Resources:

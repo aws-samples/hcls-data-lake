@@ -80,20 +80,21 @@ def main():
  
   # Create a simple HL7v2 message with a random element so we can keep uploading
   rand_num = str(random.randint(0,99999))
-  msg="""MSH|^~\&|SOURCEEHR|WA|MIRTHDST|WA|201611111111||ADT^A01|MSGID{}|P|2.3|
+  msgs={"""MSH|^~\&|SOURCEEHR|WA|MIRTHDST|WA|201611111111||ADT^A01|MSGID{}|P|2.3|
 EVN|A01|201611111111||
 PID|1|100001^^^1^MRN1|900001||DOE^JOHN^^^^||19601111|M||WH|111 THAT PL^^HERE^WA^98020^USA||(206)555-5309|||M|NON|999999999|
 NK1|1|DOE^JANE^|WIFE||(206)555-5555||||NK^NEXT OF KIN
-PV1|1|O|1001^2002^01||||123456^DOCTOR^BOB^T^^DR|||||||ADM|A0|""".format(rand_num)
+PV1|1|O|1001^2002^01||||123456^DOCTOR^BOB^T^^DR|||||||ADM|A0|""".format(rand_num), "I'm just rubbish {}".format(rand_num)}
+  
   
   for user in users:
     # Get the ID token
-    print ("Get ID token")
     idToken = get_user_password_auth(user, password, app_client_id)
-
-    print ("Send message")
-    response = sendRequest(idToken, apiGatewayId, msg, 'utf-8')
-    print (response)
+    
+    for msg in msgs:
+      print ("Send message")
+      response = sendRequest(idToken, apiGatewayId, msg, 'utf-8')
+      print (response)
 
 if __name__== "__main__":
   main()

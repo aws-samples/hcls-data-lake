@@ -3,13 +3,19 @@ Description: 'Healthcare data lake - ER7 ingestion'
 
 Parameters:
   CoreStack:
-    Description: The foundational stack which has our dependant objects
+    Description: The foundational stack
     Type: String
   AuthStack:
     Description: The authentication and authorization stack
     Type: String
+  ParseStack:
+    Description: Stack with the Step Function which parses ER7 to JSON
+    Type: String
   FunctionKey:
-    Description: The key for our uploaded lambda file
+    Type: String
+  FunctionVersion:
+    Type: String
+  FunctionHandler:
     Type: String
 
 Resources:
@@ -34,7 +40,7 @@ Resources:
           - Effect: Allow
             Action: ['dynamodb:*']
             Resource:
-            - !Sub arn:aws:dynamodb:*:*:table/${Table}
+            - !Sub arn:${AWS::Partition}:dynamodb:*:*:table/${Table}
       - PolicyName: sns
         PolicyDocument:
           Version: 2012-10-17
@@ -43,18 +49,27 @@ Resources:
             Action: ['sns:publish']
             Resource:
             - Fn::ImportValue: !Sub "${CoreStack}-Topic"
+      - PolicyName: step_function
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['states:StartSyncExecution']
+            Resource:
+            - Fn::ImportValue: !Sub "${ParseStack}-StateMachine"
             
   # Ingest the ER7 message 
   LambdaFunction:
     Type: AWS::Lambda::Function
     Properties: 
-      FunctionName: !Sub ${AWS::StackName}_function
+      FunctionName: !Sub ${AWS::StackName}_ingest
       Code:
         S3Bucket:
           Fn::ImportValue: !Sub "${CoreStack}-ArtifactBucket"
         S3Key: !Ref FunctionKey
+        S3ObjectVersion: !Ref FunctionVersion
       Description: Ingests ER7 messages
-      Handler: ingest_er7_lambda.lambda_handler
+      Handler: !Ref FunctionHandler
       Role: !GetAtt LambdaRole.Arn
       Environment:
         Variables:
@@ -68,7 +83,9 @@ Resources:
           identity_pool_id: 
             Fn::ImportValue: !Sub "${AuthStack}-IdentityPool"
           table: !Ref Table
-      Runtime: python3.8
+          state_machine:
+            Fn::ImportValue: !Sub "${ParseStack}-StateMachine"
+      Runtime: python3.9
 
   LambdaLogGroup:
     Type: AWS::Logs::LogGroup
