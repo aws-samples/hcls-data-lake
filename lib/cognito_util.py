@@ -1,16 +1,15 @@
 import boto3
+import random, string, time
 
 cognitoIdp = boto3.client('cognito-idp')
 COGNITO_SPECIAL_CHARACTERS = "^$*.[]{}()?-\"!@#%&/\,><':;|_~`"
 
-def create_and_authenticate_user(userPoolId, appClientId, username, password, userAttributes):
+def create_and_authenticate_user(userPoolId, appClientId, username, password, userAttributes=None):
   # Create the user
   response = cognitoIdp.admin_create_user(
     UserPoolId=userPoolId,
     Username=username,
-    
-    # The tag is simply not created if an empty string is used for value
-    UserAttributes=userAttributes,
+    UserAttributes=userAttributes, 
     TemporaryPassword=password,
     MessageAction='SUPPRESS'
   )
@@ -33,8 +32,8 @@ def create_and_authenticate_user(userPoolId, appClientId, username, password, us
     ClientId=appClientId,
     ChallengeName='NEW_PASSWORD_REQUIRED',
     ChallengeResponses={
-      'NEW_PASSWORD': password,
-      'USERNAME': username
+      'USERNAME': username,
+      'NEW_PASSWORD': password
     },
     Session=session
   )

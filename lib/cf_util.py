@@ -15,7 +15,8 @@ def create_or_update_stack(stack_name, template_file_path, params, capabilities=
         StackName=stack_name,
         TemplateBody=template_data,
         Parameters=parameter_map,
-        Capabilities=capabilities
+        Capabilities=capabilities,
+        OnFailure='ROLLBACK'
       )
       action = "update"
       waiter = cf.get_waiter('stack_update_complete')
@@ -24,10 +25,11 @@ def create_or_update_stack(stack_name, template_file_path, params, capabilities=
         StackName=stack_name,
         TemplateBody=template_data,
         Parameters=parameter_map,
-        Capabilities=capabilities
+        Capabilities=capabilities,
+        OnFailure='DELETE'
       )
       action = "create"
-      waiter = cf.get_waiter('stack_create_complete')  
+      waiter = cf.get_waiter('stack_create_complete')
       
     # Wait until stack creation has finished
     waiter.wait(StackName=stack_name)
@@ -39,6 +41,11 @@ def create_or_update_stack(stack_name, template_file_path, params, capabilities=
       raise
   
   return action
+
+def delete_stack(stack_name):
+  response = cf.delete_stack(StackName=stack_name)
+  waiter = cf.get_waiter('stack_delete_complete')
+  waiter.wait(StackName=stack_name)
 
 def stack_exists(stack_name):
   stacks = cf.list_stacks()['StackSummaries']
@@ -60,6 +67,16 @@ def get_physical_resource_id(stack_name, logical_resource_id):
       
   return cache_map[key]
 
+def get_output_value(stack_name, output_name):
+  response = cf.describe_stacks(StackName=stack_name)
+  outputs = response["Stacks"][0]["Outputs"]
+  for output in outputs:
+    keyName = output["OutputKey"]
+    if keyName == output_name:
+      return output["OutputValue"]
+  
+  return None
+  
 def __parse_template(template):
   with open(template) as template_fileobj: template_data = template_fileobj.read()
   cf.validate_template(TemplateBody=template_data)

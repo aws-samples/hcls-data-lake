@@ -8,11 +8,11 @@ Parameters:
   Hl7ParsingLibKey:
     Description: Key for our HL7 parsing library
     Type: String
-  CleanLambdaKey:
+  PrepareLambdaKey:
     Type: String
-  CleanLambdaVersion:
+  PrepareLambdaVersion:
     Type: String
-  CleanHandler:
+  PrepareHandler:
     Type: String
   ParseLambdaKey:
     Type: String
@@ -34,27 +34,27 @@ Resources:
       Description: "HL7apy parser library"
       LicenseInfo: MIT
 
-  #-------------------------------------------------------------- Cleaning Lambda
-  CleanLambdaFunction:
+  #-------------------------------------------------------------- Prepareing Lambda
+  PrepareLambdaFunction:
     Type: AWS::Lambda::Function
     Properties: 
-      FunctionName: !Sub ${AWS::StackName}_clean
-      Description: Used to clean our ER7 message
+      FunctionName: !Sub ${AWS::StackName}_prepare
+      Description: Used to prepare our ER7 message
       Code:
         S3Bucket: !Ref SourceBucket
-        S3Key: !Ref CleanLambdaKey
-        S3ObjectVersion: !Ref CleanLambdaVersion
-      Handler: !Ref CleanHandler
-      Role: !GetAtt CleanLambdaRole.Arn
+        S3Key: !Ref PrepareLambdaKey
+        S3ObjectVersion: !Ref PrepareLambdaVersion
+      Handler: !Ref PrepareHandler
+      Role: !GetAtt PrepareLambdaRole.Arn
       Runtime: python3.9
 
-  CleanLambdaLogGroup:
+  PrepareLambdaLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Join ['/', ['/aws/lambda', !Ref CleanLambdaFunction]]
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref PrepareLambdaFunction]]
       RetentionInDays: 1 # Keep logs for a short duration
 
-  CleanLambdaRole:
+  PrepareLambdaRole:
     Type: AWS::IAM::Role
     Properties: 
       AssumeRolePolicyDocument: 
@@ -67,7 +67,7 @@ Resources:
       ManagedPolicyArns: 
       - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
 
-  #-------------------------------------------------------------- Cleaning Lambda
+  #-------------------------------------------------------------- Prepareing Lambda
   ParseLambdaFunction:
     Type: AWS::Lambda::Function
     Properties: 
@@ -111,11 +111,11 @@ Resources:
       TracingConfiguration:
         Enabled: true
       Definition:
-        StartAt: CleanEr7
+        StartAt: PrepareEr7
         States:
-          CleanEr7:
+          PrepareEr7:
             Type: Task
-            Resource: !GetAtt CleanLambdaFunction.Arn
+            Resource: !GetAtt PrepareLambdaFunction.Arn
             InputPath: $.Message # What to pass to the Lambda
             ResultPath: $.er7 # Where to append Lambda results
             Next: ParseEr7

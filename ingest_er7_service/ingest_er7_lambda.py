@@ -58,7 +58,7 @@ def lambda_handler(event, context):
 
   # Store the message (after parsing attempt since we want that status on the tags)
   idToken = event['headers']['authorization']
-  key="source="+source+"/format=hl7v2_er7/zone=ingest/"+msg_hash+".txt"
+  key="source={}/protocol=hl7v2/format=er7/zone=ingest/{}.txt".format(source, msg_hash)
   tags = 'source={}&state={}'.format(source, state)
   __store_message(idToken, msg, key, tags, msg_hash, source)
   logger.info("Message written to bucket '{}' with key '{}'".format(os.environ['bucket_name'], key))

@@ -62,7 +62,7 @@ Resources:
   LambdaFunction:
     Type: AWS::Lambda::Function
     Properties: 
-      FunctionName: !Sub ${AWS::StackName}_ingest
+      FunctionName: !Sub "${AWS::StackName}_ingest"
       Code:
         S3Bucket:
           Fn::ImportValue: !Sub "${CoreStack}-ArtifactBucket"
@@ -142,3 +142,9 @@ Resources:
         KeyType: "RANGE"
       TableName: !Sub ${AWS::StackName}-INGESTED_MESSAGE
       BillingMode: PAY_PER_REQUEST
+
+Outputs:
+  PostEr7RouteUrl:
+    Value: !Join ['', ["https://", Fn::ImportValue: !Sub "${CoreStack}-HttpApi", ".execute-api.", !Ref AWS::Region, ".amazonaws.com/er7"]]
+    Export:
+      Name: !Sub ${AWS::StackName}-PostEr7RouteUrl

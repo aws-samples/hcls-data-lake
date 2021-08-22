@@ -11,7 +11,7 @@ def deploy(stack_name, artifact_bucket):
   params = {}
   
   # Sync our Lambda functions
-  params.update(__sync_and_get_params("clean_er7_lambda.py", artifact_bucket, 'Clean'))
+  params.update(__sync_and_get_params("prepare_er7_lambda.py", artifact_bucket, 'Prepare'))
   params.update(__sync_and_get_params("parse_er7_lambda.py", artifact_bucket, 'Parse'))
   print ("Lambda files synced")
   
