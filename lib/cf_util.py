@@ -78,7 +78,10 @@ def get_output_value(stack_name, output_name):
   
 def __parse_template(template):
   with open(template) as template_fileobj: template_data = template_fileobj.read()
-  cf.validate_template(TemplateBody=template_data)
+  response = cf.validate_template(TemplateBody=template_data)
+  if "CapabilitiesReason" in response:
+    raise ValueError("Template '{}' failed validation: '{}'".format(template, response['CapabilitiesReason']))
+
   return template_data
 
 def __get_parameter_map(params):
