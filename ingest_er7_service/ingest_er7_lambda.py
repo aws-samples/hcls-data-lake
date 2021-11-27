@@ -101,7 +101,6 @@ def __publish_to_topic(msg, format, state, key):
   sns.publish(
     TopicArn=os.environ['topic'],
     Message=msg,
-    Subject='string',
     MessageAttributes={
       'protocol': {
         'DataType': 'String',
