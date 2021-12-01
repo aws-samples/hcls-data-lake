@@ -265,6 +265,12 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub ${DataLakeBucket}-ct-logs
+
+      # Encryption at rest
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
   
   # Policy to allow CloudTrail service to access our CloudTrail logging bucket
   DataLakeCloudTrailBucketPolicy: 
