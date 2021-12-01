@@ -73,7 +73,7 @@ Resources:
                 Resource: "*"
                 
                 # Get is restricted to the specific bucket and must have a tag matching the custom 'read' attribute for the user
-              - Effect: "Allow"
+              - Effect: Allow
                 Action: ['s3:GetObject']
                 Resource:
                   Fn::Join: ["", ["arn:aws:s3:::", Fn::ImportValue: !Sub "${CoreStack}-Bucket", "/*"]]
@@ -82,7 +82,7 @@ Resources:
                     "s3:ExistingObjectTag/source": "${aws:PrincipalTag/read}"
                     
                 # Put is restricted to the specific bucket and must have a tag matching the custom 'write' attribute for the user
-              - Effect: "Allow"
+              - Effect: Allow
                 Action: ['s3:PutObject','s3:PutObjectTagging']
                 Resource:
                   Fn::Join: ["", ["arn:aws:s3:::", Fn::ImportValue: !Sub "${CoreStack}-Bucket", "/*"]]

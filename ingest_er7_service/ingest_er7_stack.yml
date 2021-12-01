@@ -114,7 +114,7 @@ Resources:
       IntegrationUri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations
       PayloadFormatVersion: 2.0
   
-  # POST route (discards exact duplicates)
+  # POST route
   GatewayRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
