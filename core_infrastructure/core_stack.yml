@@ -24,6 +24,8 @@ Resources:
         IgnorePublicAcls: true
         BlockPublicPolicy: true
         RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
 
   BucketPolicy:
     Type: AWS::S3::BucketPolicy
