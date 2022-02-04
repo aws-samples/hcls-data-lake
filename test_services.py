@@ -5,7 +5,8 @@ import random
 
 # Lets us find our lib folder for import
 sys.path.append(".")
-from auth_service import auth_setup
+from microservices.core import core_setup
+from microservices.front_door import front_door_setup
 from lib import cognito_util, cf_util
 
 def __create_user_if_not_exists(stack_name, username, password, r_institution, w_institution):
@@ -31,7 +32,7 @@ def encodeToBase64(string, encoding):
 def sendRequest(idToken, url, msg, encoding):
   headers = { 
     'Authorization': idToken, 
-    "Content-Type": "application/json"
+    'Content-Type': "application/json"
   }
 
   data = json.dumps({'msg': encodeToBase64(msg, encoding), "encoding": encoding})
@@ -48,12 +49,12 @@ def main():
   args = parser.parse_args()
   stack_name = args.stack_name
 
-  auth_stack_name = stack_name +"-auth"
-  ingest_er7_stack_name = stack_name +"-ingest-er7"
+  front_door_stack_name = stack_name +"-front-door"
+  # ingest_er7_stack_name = stack_name +"-ingest-er7"
 
   # Pull data from our stacks
-  url = cf_util.get_output_value(ingest_er7_stack_name, "PostEr7RouteUrl")
-  app_client_id = cf_util.get_physical_resource_id(auth_stack_name, "UserPoolClient")
+  url = cf_util.get_output_value(front_door_stack_name, "PostEr7RouteUrl")
+  app_client_id = cf_util.get_physical_resource_id(front_door_stack_name, "UserPoolClient")
 
   users = ["admin@example.com","reader@example.com","writer@example.com"]
   password = "3C{KWLrXieQ#"
@@ -61,9 +62,9 @@ def main():
   
   # Create our user
   print("Create users")
-  __create_user_if_not_exists(auth_stack_name, users[0], password, institution, institution)
-  __create_user_if_not_exists(auth_stack_name, users[1], password, institution, "")
-  __create_user_if_not_exists(auth_stack_name, users[2], password, "", institution)
+  __create_user_if_not_exists(front_door_stack_name, users[0], password, institution, institution)
+  __create_user_if_not_exists(front_door_stack_name, users[1], password, institution, "")
+  __create_user_if_not_exists(front_door_stack_name, users[2], password, "", institution)
  
   # Create a simple HL7v2 message with a random element so we can keep uploading
   rand_num = str(random.randint(0,99999))

@@ -13,8 +13,4 @@ def deploy(stack_name):
     rand_num = str(random.randint(0,999999999))
     params = {'BucketName':"healthcare-data-lake-" + rand_num, 'ArtifactBucketName':"healthcare-data-lake-artifacts-" + rand_num}
 
-  action = cf_util.create_or_update_stack(stack_name, template_file_path, params)
-  
-  if action == 'create': print("Stack created")
-  elif action == 'update': print("Stack updated")
-  elif action == 'none': print("No changes")
+  return cf_util.create_or_update_stack(stack_name, template_file_path, params)

@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Healthcare data lake - front door'
+
+Parameters:
+  CoreStack:
+    Description: The foundational stack
+    Type: String
+  FunctionKey:
+    Type: String
+  FunctionVersion:
+    Type: String
+  FunctionHandler:
+    Type: String
+
+Resources:
+  #---------------------------------------------------- AuthC and AuthZ
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UserPoolName: !Sub ${AWS::StackName}-UserPool
+      UsernameAttributes: [email]
+      Schema: 
+      - Name: read
+        AttributeDataType: String
+        Mutable: true
+        Required: false # Does not support required custom attributes
+      - Name: write
+        AttributeDataType: String
+        Mutable: true
+        Required: false
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub ${AWS::StackName}-UserPoolClient
+      GenerateSecret: false
+      UserPoolId: !Ref UserPool
+      ExplicitAuthFlows:
+      - ALLOW_USER_PASSWORD_AUTH
+      - ALLOW_ADMIN_USER_PASSWORD_AUTH
+      - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub ${AWS::StackName}_IdentityPool # Does not like dashes in the name
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders: 
+        - ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+  
+  #-------------------------------------------------------------- API Gateway
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${AWS::StackName}-APIGateway
+      ProtocolType: HTTP
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties: 
+      ApiId: !Ref HttpApi
+      AutoDeploy: true
+      Description: Default stage
+      StageName: $default
+  
+  # Authorizer for data lake API Gateway
+  Authorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties: 
+      Name: !Sub ${AWS::StackName}-Authorizer
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      IdentitySource: [$request.header.Authorization]
+      JwtConfiguration: 
+        Audience: [!Ref UserPoolClient]
+        Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      ManagedPolicyArns: 
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
+      Policies:
+      - PolicyName: sns
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['sns:publish']
+            Resource:
+            - Fn::ImportValue: !Sub "${CoreStack}-Topic"
+      - PolicyName: dynamodb
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['dynamodb:*']
+            Resource:
+            - !Sub arn:${AWS::Partition}:dynamodb:*:*:table/${Table}
+
+  # Ingest the ER7 message 
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Sub "${AWS::StackName}_ingest"
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub "${CoreStack}-ArtifactBucket"
+        S3Key: !Ref FunctionKey
+        S3ObjectVersion: !Ref FunctionVersion
+      Description: Ingests ER7 messages
+      Handler: !Ref FunctionHandler
+      Role: !GetAtt LambdaRole.Arn
+      Environment:
+        Variables:
+          topic: 
+            Fn::ImportValue: !Sub "${CoreStack}-Topic"
+          table: !Ref Table
+      Runtime: python3.9
+
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref LambdaFunction]]
+      RetentionInDays: 1 # Keep logs for a short duration
+
+  # Permission for the HTTP gateway to invoke our function
+  GatewayLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LambdaFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*
+
+  # Integrate function to API Gateway
+  GatewayIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    DependsOn: [LambdaFunction]
+    Properties: 
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations
+      PayloadFormatVersion: 2.0
+  
+  # POST route
+  GatewayRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /er7"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref Authorizer
+      Target: !Join [/, [integrations, !Ref GatewayIntegration]]
+      
+  # DynamoDB table used to track message uniqueness
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+      - AttributeName: "message_hash"
+        AttributeType: "S"
+      KeySchema: 
+      - AttributeName: "message_hash"
+        KeyType: "HASH"
+      TableName: !Sub ${AWS::StackName}-received_message
+      BillingMode: PAY_PER_REQUEST
+
+Outputs:
+  CognitoEndpoint:
+    Value: !Join ['', ["cognito-idp.",!Ref AWS::Region,".amazonaws.com"]]
+  UserPool:
+    Value: !Ref UserPool
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName", UserPool]]
+  IdentityPool:
+    Value: !Ref IdentityPool
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName", IdentityPool]]
+  HttpApi:
+    Value: !Ref HttpApi
+    Export:
+      Name: !Sub ${AWS::StackName}-HttpApi
+  HttpApiArn:
+    Value: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}
+    Export:
+      Name: !Sub ${AWS::StackName}-HttpApiArn
+  Authorizer:
+    Value: !Ref Authorizer
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName", Authorizer]]
+  PostEr7RouteUrl:
+    Value: !Join ['', ["https://", !Ref HttpApi, ".execute-api.", !Ref AWS::Region, ".amazonaws.com/er7"]]
+    Export:
+      Name: !Sub ${AWS::StackName}-PostEr7RouteUrl

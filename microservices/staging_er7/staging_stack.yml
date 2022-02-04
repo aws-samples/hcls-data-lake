@@ -1,12 +1,15 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Parse ER7 to JSON'
-
 Parameters:
-  SourceBucket:
-    Description: Bucket where code artifacts are kept
+  CoreStack:
+    Description: The foundational stack
     Type: String
   Hl7ParsingLibKey:
     Description: Key for our HL7 parsing library
+    Type: String
+  TriggerLambdaKey:
+    Type: String
+  TriggerLambdaVersion:
+    Type: String
+  TriggerHandler:
     Type: String
   PrepareLambdaKey:
     Type: String
@@ -19,29 +22,110 @@ Parameters:
   ParseLambdaVersion:
     Type: String
   ParseHandler:
-    Type: String    
+    Type: String
 
 Resources:
+  #-------------------------------------------------------------- Lambda to connect SNS and Step Function
+  TriggerLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Sub "${AWS::StackName}_trigger"
+      Description: Function to connect SNS to Step Function
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub "${CoreStack}-ArtifactBucket"
+        S3Key: !Ref TriggerLambdaKey
+        S3ObjectVersion: !Ref TriggerLambdaVersion
+      Handler: !Ref TriggerHandler
+      Role: !GetAtt TriggerLambdaRole.Arn
+      Runtime: python3.9
+      Environment:
+        Variables:
+          bucket_name: 
+            Fn::ImportValue: !Sub "${CoreStack}-Bucket"
+          topic: 
+            Fn::ImportValue: !Sub "${CoreStack}-Topic"
+          state_machine: !Ref StateMachine
+      
+  TriggerLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref TriggerLambdaFunction]]
+      RetentionInDays: 1 # Keep logs for a short duration
+
+  TriggerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      ManagedPolicyArns: 
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
+      Policies:
+      - PolicyName: sns
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['sns:publish']
+            Resource:
+            - Fn::ImportValue: !Sub "${CoreStack}-Topic"      
+      - PolicyName: step_function
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['states:StartSyncExecution']
+            Resource: !Ref StateMachine
+
+  # Permission for SNS topic to invoke this Lambda
+  TriggerLambdaResourcePolicy:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TriggerLambdaFunction
+      Principal: sns.amazonaws.com
+      Action: "lambda:InvokeFunction"
+      SourceArn:
+        Fn::ImportValue: !Sub "${CoreStack}-Topic"
+
+  # Subscription to SNS topic
+  Subscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn:
+        Fn::ImportValue: !Sub "${CoreStack}-Topic"
+      Endpoint: !GetAtt TriggerLambdaFunction.Arn
+      FilterPolicy:
+        protocol: [hl7v2]
+        format: [er7]
+      Protocol: lambda
+  
   #-------------------------------------------------------------- Lambda Layer
   Hl7apyLayer:
     Type: AWS::Lambda::LayerVersion
     Properties: 
       CompatibleRuntimes: [python2.7, python3.6, python3.7, python3.8, python3.9]
       Content: 
-        S3Bucket: !Ref SourceBucket
+        S3Bucket:
+          Fn::ImportValue: !Sub "${CoreStack}-ArtifactBucket"
         S3Key: !Ref Hl7ParsingLibKey
       LayerName: hl7apy
       Description: "HL7apy parser library"
       LicenseInfo: MIT
 
-  #-------------------------------------------------------------- Prepareing Lambda
+  #-------------------------------------------------------------- Preparing Lambda
   PrepareLambdaFunction:
     Type: AWS::Lambda::Function
     Properties: 
       FunctionName: !Sub ${AWS::StackName}_prepare
-      Description: Used to prepare our ER7 message
+      Description: Prepares our ER7 message by applying common syntax corrections
       Code:
-        S3Bucket: !Ref SourceBucket
+        S3Bucket:
+          Fn::ImportValue: !Sub "${CoreStack}-ArtifactBucket"
         S3Key: !Ref PrepareLambdaKey
         S3ObjectVersion: !Ref PrepareLambdaVersion
       Handler: !Ref PrepareHandler
@@ -67,7 +151,7 @@ Resources:
       ManagedPolicyArns: 
       - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
 
-  #-------------------------------------------------------------- Prepareing Lambda
+  #-------------------------------------------------------------- Parsing Lambda
   ParseLambdaFunction:
     Type: AWS::Lambda::Function
     Properties: 
@@ -75,7 +159,8 @@ Resources:
       Description: Parse an ER7 message to JSON
       Layers: [!Ref Hl7apyLayer]
       Code:
-        S3Bucket: !Ref SourceBucket
+        S3Bucket:
+          Fn::ImportValue: !Sub "${CoreStack}-ArtifactBucket"
         S3Key: !Ref ParseLambdaKey
         S3ObjectVersion: !Ref ParseLambdaVersion
       Handler: !Ref ParseHandler
@@ -124,6 +209,7 @@ Resources:
             Resource: !GetAtt ParseLambdaFunction.Arn
             InputPath: $.er7
             ResultPath: $.json
+            OutputPath: $.json # Filter the output
             End: true
       LoggingConfiguration:
         Destinations:

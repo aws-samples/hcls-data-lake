@@ -1,3 +1,6 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Healthcare data lake - add messages'
+
 Parameters:
   CoreStack:
     Description: The foundational stack
@@ -10,12 +13,12 @@ Parameters:
     Type: String
 
 Resources:
-  #-------------------------------------------------------------- A temporary function
+  #-------------------------------------------------------------- Write messages to the data lake and catalog
   LambdaFunction:
     Type: AWS::Lambda::Function
     Properties: 
-      FunctionName: !Sub "${AWS::StackName}_staging"
-      Description: Temporary function to put JSON file into the data lake
+      FunctionName: !Sub "${AWS::StackName}_write_messages"
+      Description: Write messages to data lake and catalog
       Code:
         S3Bucket:
           Fn::ImportValue: !Sub "${CoreStack}-ArtifactBucket"
@@ -26,9 +29,11 @@ Resources:
       Runtime: python3.9
       Environment:
         Variables:
+          catalog:
+            Fn::ImportValue: !Sub "${CoreStack}-Catalog"
           bucket_name: 
             Fn::ImportValue: !Sub "${CoreStack}-Bucket"
-      
+
   LambdaLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -56,6 +61,23 @@ Resources:
             Action: ['s3:PutObject', 's3:PutObjectTagging']
             Resource:
               Fn::Join: ["", ["arn:aws:s3:::", Fn::ImportValue: !Sub "${CoreStack}-Bucket", "/*"]]
+      - PolicyName: dynamodb
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['dynamodb:*']
+            Resource:
+              Fn::ImportValue: !Sub "${CoreStack}-CatalogArn"
+              
+  # Subscription for Lambda function to SNS topic
+  Subscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn:
+        Fn::ImportValue: !Sub "${CoreStack}-Topic"
+      Endpoint: !GetAtt LambdaFunction.Arn
+      Protocol: lambda
 
   # Permission for SNS topic to invoke this Lambda
   LambdaResourcePolicy:
@@ -66,16 +88,3 @@ Resources:
       Action: "lambda:InvokeFunction"
       SourceArn:
         Fn::ImportValue: !Sub "${CoreStack}-Topic"
-
-  # Subscription to SNS topic
-  Subscription:
-    Type: AWS::SNS::Subscription
-    Properties:
-      TopicArn:
-        Fn::ImportValue: !Sub "${CoreStack}-Topic"
-      Endpoint: !GetAtt LambdaFunction.Arn
-      FilterPolicy:
-        protocol: [hl7v2]
-        format: [json]
-        state: [parsed]
-      Protocol: lambda

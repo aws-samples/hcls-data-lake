@@ -34,7 +34,7 @@ Resources:
       PolicyDocument:
         Version: 2012-10-17
         Statement:
-        - Action: 's3:*'
+        - Action: 's3:*' # Only allow secure transport
           Effect: Deny
           Principal: '*'
           Resource:
@@ -67,7 +67,7 @@ Resources:
       PolicyDocument:
         Version: 2012-10-17
         Statement:
-        - Action: 's3:*'
+        - Action: 's3:*' # Only allow secure transport
           Effect: Deny
           Principal: '*'
           Resource:
@@ -76,29 +76,27 @@ Resources:
           Condition:
             Bool: 
               'aws:SecureTransport': false
-
-  #-------------------------------------------------------------- API Gateway
-  HttpApi:
-    Type: AWS::ApiGatewayV2::Api
-    Properties:
-      Name: !Sub ${AWS::StackName}-APIGateway
-      ProtocolType: HTTP
-
-  DefaultStage:
-    Type: AWS::ApiGatewayV2::Stage
+  #-------------------------------------------------------------- Catalog to go with the data lake buckets
+  Catalog:
+    Type: AWS::DynamoDB::Table
     Properties: 
-      ApiId: !Ref HttpApi
-      AutoDeploy: true
-      Description: Default stage
-      StageName: $default
+      AttributeDefinitions: 
+      - AttributeName: "message_id"
+        AttributeType: "S"
+      KeySchema: 
+      - AttributeName: "message_id"
+        KeyType: "HASH"
+      TableName: !Sub ${AWS::StackName}-Catalog
+      BillingMode: PAY_PER_REQUEST
   
-  #-------------------------------------------------------------- Communication topic (use attributes to determine filtering)
+  #-------------------------------------------------------------- Communication / hub topic (use attributes to determine filtering)
   Topic:
     Type: AWS::SNS::Topic
     Properties: 
       TopicName: !Sub ${AWS::StackName}-Topic
-      KmsMasterKeyId: alias/aws/sns # Using default key for now
-      
+      DisplayName: "Pub-Sub-Hub"
+      KmsMasterKeyId: alias/aws/sns # Using default key
+
 Outputs:
   Bucket:
     Value: !Ref Bucket
@@ -108,15 +106,15 @@ Outputs:
     Value: !Ref ArtifactBucket
     Export:
       Name: !Sub ${AWS::StackName}-ArtifactBucket
-  HttpApi:
-    Value: !Ref HttpApi
-    Export:
-      Name: !Sub ${AWS::StackName}-HttpApi
-  HttpApiArn:
-    Value: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}
-    Export:
-      Name: !Sub ${AWS::StackName}-HttpApiArn
   Topic:
     Value: !Ref Topic
     Export:
       Name: !Sub ${AWS::StackName}-Topic
+  Catalog:
+    Value: !Ref Catalog
+    Export:
+      Name: !Sub ${AWS::StackName}-Catalog
+  CatalogArn:
+    Value: !GetAtt Catalog.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-CatalogArn
