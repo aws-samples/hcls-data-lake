@@ -97,6 +97,139 @@ Resources:
       DisplayName: "Pub-Sub-Hub"
       KmsMasterKeyId: alias/aws/sns # Using default key
 
+  #-------------------------------------------------------------- Write messages to the data lake and catalog
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: !Sub "${AWS::StackName}_write_messages"
+      Description: Write messages to data lake and catalog
+      Code:
+         ZipFile: |
+          import boto3, json, os, logging
+          from botocore.exceptions import ClientError
+          from boto3.dynamodb.conditions import Key, Attr
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          # Initialize clients outside of the main function to reuse between calls
+          sns = boto3.client('sns')
+          s3 = boto3.client('s3')
+          catalog = boto3.resource('dynamodb').Table(os.environ['catalog'])
+          
+          def lambda_handler(event, context):
+            logger.info(event)
+            
+            # Get data that was passed from SNS
+            data = {
+              'MessageId': event['Records'][0]['Sns']['MessageId'],
+              'Message':event['Records'][0]['Sns']['Message'], 
+              'MessageAttributes': event['Records'][0]['Sns']['MessageAttributes']
+            }
+            logger.info(data)
+            logger.info(data['MessageAttributes'])
+            msg = data['Message']
+            
+            #---------- Write to the data lake
+            
+            # Determine the attributes
+            protocol = data['MessageAttributes']['protocol']['Value']
+            format_type = data['MessageAttributes']['format']['Value']
+            source = data['MessageAttributes']['source']['Value']
+            event = data['MessageAttributes']['event']['Value']
+            
+            if event == 'ingested': zone = 'ingestion'
+            elif event == 'staged': zone = 'staging'
+            elif event == 'error': zone = 'error'
+            
+            if format_type == 'json':
+              content_type = "application/json; charset=utf-8"
+            else:
+              content_type = "text/plain; charset=utf-8"
+            
+            # Assemble the key
+            key = zone + '/protocol=' + protocol + '/' + data['MessageId'] +"." +format_type
+            logger.info('Key: {}'.format(key))
+            
+            # Write to the bucket
+            s3.put_object(
+              Bucket = os.environ['bucket_name'],
+              Key=key,
+              Body=msg,
+              ContentType=content_type
+            )
+            logger.info("Message written to S3 bucket")
+            
+            # Update the catalog
+            catalog.put_item(
+              Item={
+                'message_id': data['MessageId'],
+                'bucket': os.environ['bucket_name'],
+                'key': key,
+                'source': source
+              }
+            )
+            logger.info("Catalog updated")
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: python3.9
+      Environment:
+        Variables:
+          catalog: !Ref Catalog
+          bucket_name: !Ref Bucket
+
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ['/', ['/aws/lambda', !Ref LambdaFunction]]
+      RetentionInDays: 1 # Keep logs for a short duration
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      ManagedPolicyArns: 
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole # Provides access to CloudWatch for logging
+      Policies:
+      - PolicyName: s3
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['s3:PutObject', 's3:PutObjectTagging']
+            Resource: !Sub arn:aws:s3:::${Bucket}/*
+              # Fn::Join: ["", ["arn:aws:s3:::", !Ref Bucket, "/*"]]
+      - PolicyName: dynamodb
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: ['dynamodb:*']
+            Resource: !GetAtt Catalog.Arn
+              
+  # Subscription for Lambda function to SNS topic
+  Subscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref Topic
+      Endpoint: !GetAtt LambdaFunction.Arn
+      Protocol: lambda
+
+  # Permission for SNS topic to invoke this Lambda
+  LambdaResourcePolicy:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Principal: sns.amazonaws.com
+      Action: "lambda:InvokeFunction"
+      SourceArn: !Ref Topic
+
 Outputs:
   Bucket:
     Value: !Ref Bucket

@@ -1,11 +1,13 @@
 import boto3
 from botocore.exceptions import ClientError
+import time
 
 cf = boto3.client('cloudformation')
 USE_PREVIOUS_VALUE = "4978#@#$@!)*&@#/$3423" # Random string to avoid collision; not a complex enough case to warrant Enums
+NO_UPDATES = "NO_UPDATES"
 cache_map = {} # Used to cache results
 
-def create_or_update_stack(stack_name, template_file_path, params, capabilities=[]):
+def create_or_update_stack(stack_name, template_file_path, params, capabilities=[], wait=True):
   template_data = __parse_template(template_file_path)
   parameter_map = __get_parameter_map(params)
   
@@ -17,7 +19,6 @@ def create_or_update_stack(stack_name, template_file_path, params, capabilities=
         Parameters=parameter_map,
         Capabilities=capabilities
       )
-      action = "update"
       waiter = cf.get_waiter('stack_update_complete')
     else:
       response = cf.create_stack(
@@ -27,24 +28,39 @@ def create_or_update_stack(stack_name, template_file_path, params, capabilities=
         Capabilities=capabilities,
         OnFailure='DELETE'
       )
-      action = "create"
       waiter = cf.get_waiter('stack_create_complete')
-      
-    # Wait until stack creation has finished
-    waiter.wait(StackName=stack_name)
+    
+    if wait:  
+      # Wait until stack deployment has finished
+      waiter.wait(StackName=stack_name)
   except ClientError as ex:
     error_message = ex.response['Error']['Message']
-    if error_message == 'No updates are to be performed.':
-      action = "none"
-    else:
-      raise
+    if error_message == 'No updates are to be performed.': return NO_UPDATES
+    else: raise
   
-  return action
+  return cf.describe_stacks(StackName=stack_name)['Stacks'][0]['StackStatus']
 
-def delete_stack(stack_name):
-  response = cf.delete_stack(StackName=stack_name)
-  waiter = cf.get_waiter('stack_delete_complete')
-  waiter.wait(StackName=stack_name)
+# Delete batches of stacks in parallel
+def delete_stacks(*stack_names):
+  stack_ids = []
+  
+  # Kick off the deletes
+  for stack_name in stack_names:
+    stack_id = cf.describe_stacks(StackName=stack_name)['Stacks'][0]['StackId']
+    stack_ids.append(stack_id)
+    cf.delete_stack(StackName=stack_name)
+  
+  # Wait until they all complete
+  while True:
+    complete = True
+    for stack_id in stack_ids:
+      status = cf.describe_stacks(StackName=stack_id)['Stacks'][0]['StackStatus']
+      if status not in ['DELETE_COMPLETE', 'DELETE_FAILED']:
+        complete = False
+        break
+    
+    if complete: break
+    else: time.sleep(5)
 
 def stack_exists(stack_name):
   stacks = cf.list_stacks()['StackSummaries']

@@ -7,7 +7,7 @@ from lib import lambda_util
 local_folder = os.path.dirname(os.path.realpath(__file__))
 template_file_path = local_folder + "/front_door_stack.yml"
 
-def deploy(stack_name, core_stack_name):
+def deploy(stack_name, core_stack_name, wait=False):
   # Sync our lambda function
   artifact_bucket_name = cf_util.get_physical_resource_id(core_stack_name, "ArtifactBucket")
   key, version = lambda_util.sync_lambda_function(local_folder+"/front_door_lambda.py", artifact_bucket_name)
@@ -22,12 +22,12 @@ def deploy(stack_name, core_stack_name):
   # Explicitly acknowledge that we are creating IAM roles
   capabilities=['CAPABILITY_IAM']
 
-  action = cf_util.create_or_update_stack(stack_name, template_file_path, params, capabilities)
-  if action == 'create':
+  status = cf_util.create_or_update_stack(stack_name, template_file_path, params, capabilities, wait)
+  if status == 'CREATE_COMPLETE':
     __set_attribute_map(stack_name) # Set attribute map through Boto as 'set-principal-tag-attribute-map' operation is not yet in CloudFormation
     print("User attributes mapped")
   
-  return action
+  return status
 
 def __set_attribute_map(stack_name):
   identity_pool_id = cf_util.get_physical_resource_id(stack_name, "IdentityPool")
